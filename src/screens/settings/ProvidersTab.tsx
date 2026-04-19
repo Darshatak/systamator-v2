@@ -1,11 +1,9 @@
-// Unified /login. One row per provider, one button. Secrets go straight
-// into the OS keychain (see KC_NS.providers).
-
 import { useEffect, useState } from 'react'
 import { Sparkles, Bot, Cpu, Brain, Loader2, Check, KeyRound } from 'lucide-react'
 import clsx from 'clsx'
 import { kcGet, kcSet, KC_NS } from '@/lib/keychain'
 import { isDesktop } from '@/lib/ipc'
+import { Card, Button, Chip } from '@/components/ui'
 
 interface Provider {
   id:    string
@@ -13,25 +11,26 @@ interface Provider {
   type:  'claude' | 'openai' | 'gemini' | 'ollama' | 'xai' | 'mistral'
   icon:  typeof Sparkles
   hint:  string
+  blurb: string
 }
 
 const PROVIDERS: Provider[] = [
-  { id: 'claude',  name: 'Claude (Anthropic)', type: 'claude',  icon: Sparkles, hint: 'API key (sk-ant-…) — OAuth flow lands in M1' },
-  { id: 'openai',  name: 'OpenAI / GPT',       type: 'openai',  icon: Bot,      hint: 'API key (sk-…)' },
-  { id: 'gemini',  name: 'Gemini (Google)',    type: 'gemini',  icon: Brain,    hint: 'API key — Studio key works' },
-  { id: 'ollama',  name: 'Ollama (local)',     type: 'ollama',  icon: Cpu,      hint: 'No key — base URL only (default localhost:11434)' },
-  { id: 'xai',     name: 'xAI / Grok',         type: 'xai',     icon: Sparkles, hint: 'API key' },
-  { id: 'mistral', name: 'Mistral',            type: 'mistral', icon: Bot,      hint: 'API key' },
+  { id: 'claude',  name: 'Claude (Anthropic)', type: 'claude',  icon: Sparkles, hint: 'sk-ant-…',                       blurb: 'Best for code, ops, long tool loops, MCP.' },
+  { id: 'openai',  name: 'OpenAI / GPT',       type: 'openai',  icon: Bot,      hint: 'sk-…',                            blurb: 'General-purpose, structured output.' },
+  { id: 'gemini',  name: 'Gemini (Google)',    type: 'gemini',  icon: Brain,    hint: 'AI Studio key',                   blurb: 'Long context, deep research, multimodal.' },
+  { id: 'ollama',  name: 'Ollama (local)',     type: 'ollama',  icon: Cpu,      hint: 'http://localhost:11434',          blurb: 'Run models on your machine; no cloud.' },
+  { id: 'xai',     name: 'xAI / Grok',         type: 'xai',     icon: Sparkles, hint: 'xai-…',                           blurb: 'Top SWE-bench coding throughput.' },
+  { id: 'mistral', name: 'Mistral',            type: 'mistral', icon: Bot,      hint: 'mistral-…',                       blurb: 'Cost-efficient European alternative.' },
 ]
 
 export function ProvidersTab() {
   return (
-    <div className="max-w-2xl">
-      <h2 className="text-[15px] font-semibold text-heading mb-1">Providers</h2>
-      <p className="text-[12px] text-meta mb-4">
-        One row per AI provider. Secrets go to the OS keychain — never disk, never logs.
+    <div className="max-w-3xl">
+      <h2 className="text-[18px] font-bold text-heading mb-1">Providers</h2>
+      <p className="text-[12px] text-meta mb-5">
+        One row per AI provider. Secrets go straight to the OS keychain — never disk, never logs.
       </p>
-      <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-3">
         {PROVIDERS.map(p => <Row key={p.id} provider={p} />)}
       </div>
     </div>
@@ -40,10 +39,9 @@ export function ProvidersTab() {
 
 function Row({ provider }: { provider: Provider }) {
   const [editing, setEditing] = useState(false)
-  const [value, setValue]     = useState('')
-  const [hasKey, setHasKey]   = useState<boolean | null>(null)
-  const [saving, setSaving]   = useState(false)
-
+  const [value, setValue] = useState('')
+  const [hasKey, setHasKey] = useState<boolean | null>(null)
+  const [saving, setSaving] = useState(false)
   const Icon = provider.icon
 
   useEffect(() => {
@@ -54,44 +52,39 @@ function Row({ provider }: { provider: Provider }) {
   async function save() {
     if (!value) return
     setSaving(true)
-    try {
-      await kcSet(KC_NS.providers, provider.id, value)
-      setHasKey(true); setEditing(false); setValue('')
-    } finally { setSaving(false) }
+    try { await kcSet(KC_NS.providers, provider.id, value); setHasKey(true); setEditing(false); setValue('') }
+    finally { setSaving(false) }
   }
 
   return (
-    <div className="rounded-xl border border-white/10 bg-surface p-3">
-      <div className="flex items-center gap-3">
-        <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center"><Icon size={14} /></div>
+    <Card>
+      <div className="flex items-start gap-3">
+        <div className="w-10 h-10 rounded-xl bg-[rgb(var(--c-primary)/0.14)] text-[rgb(var(--c-primary-2))] flex items-center justify-center flex-shrink-0">
+          <Icon size={16} />
+        </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-[13px] font-semibold text-heading">{provider.name}</span>
-            {hasKey && <Check size={12} className="text-success" />}
+            {hasKey && <Chip tone="success" icon={<Check size={9} />}>connected</Chip>}
           </div>
-          <div className="text-[11px] text-meta truncate">{provider.hint}</div>
+          <div className="text-[11px] text-meta mt-0.5 leading-relaxed">{provider.blurb}</div>
+          <div className="text-[10px] text-meta font-mono mt-1">{provider.hint}</div>
         </div>
-        <button onClick={() => setEditing(v => !v)}
-                className={clsx('px-2.5 py-1 rounded-md text-[11px] font-semibold',
-                  hasKey ? 'border border-white/10 text-body hover:bg-white/5' : 'bg-primary text-white')}>
+        <Button size="sm" variant={hasKey ? 'soft' : 'primary'} onClick={() => setEditing(v => !v)}>
           {hasKey ? 'Update' : 'Sign in'}
-        </button>
+        </Button>
       </div>
-
       {editing && (
         <div className="mt-3 flex items-center gap-2">
-          <KeyRound size={12} className="text-meta" />
-          <input type="password"
-                 value={value}
-                 onChange={e => setValue(e.target.value)}
+          <KeyRound size={12} className="text-meta flex-shrink-0" />
+          <input type="password" value={value} onChange={e => setValue(e.target.value)}
                  placeholder={`${provider.name} API key`}
-                 className="flex-1 px-2 py-1.5 rounded border border-white/10 bg-transparent text-[12px] font-mono outline-none focus:border-primary" />
-          <button onClick={save} disabled={!value || saving}
-                  className="px-3 py-1.5 rounded-md bg-primary text-white text-[11px] font-semibold disabled:opacity-50">
+                 className="flex-1 h-8 px-2 rounded-md border border-white/10 bg-white/5 text-[12px] font-mono text-heading outline-none focus:border-[rgb(var(--c-primary)/0.6)]" />
+          <Button size="sm" variant="primary" onClick={save} disabled={!value || saving}>
             {saving ? <Loader2 size={11} className="animate-spin" /> : 'Save'}
-          </button>
+          </Button>
         </div>
       )}
-    </div>
+    </Card>
   )
 }
