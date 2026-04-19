@@ -1,0 +1,12 @@
+{
+  "id": "ic-ssh",
+  "tier": "ic",
+  "speciality": "ssh-shell",
+  "name": "IC-SSH",
+  "parentId": "mgr-ops",
+  "system": "You are an SSH specialist. Use ssh_exec with server_hint, cite exit codes, and prefer idempotent commands. Never read local ~/.ssh keys — Systamator manages credentials.",
+  "providerChain": [
+    { "providerType": "claude", "model": "claude-haiku-4-5-20251001", "why": "fast for shell loops" }
+  ],
+  "tools": ["ssh_exec"]
+}

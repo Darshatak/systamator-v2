@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Design tokens (light) ──────────────────────────────────────────── */
+:root {
+  --c-primary: 124 58 237;       /* violet-600 */
+  --c-accent:  168 85  247;      /* purple-500 */
+  --c-bg:      250 250 252;
+  --c-surface: 255 255 255;
+  --c-border:    0   0   0 / 0.08;
+  --c-heading:  17  24  39;
+  --c-body:    51   65  85;
+  --c-meta:   100 116 139;
+  --c-success: 16  185 129;
+  --c-warn:   245 158  11;
+  --c-danger: 239  68  68;
+}
+.dark {
+  --c-primary: 167 139 250;
+  --c-accent:  192 132 252;
+  --c-bg:       12  10  24;
+  --c-surface:  20  17  46;
+  --c-border:  255 255 255 / 0.08;
+  --c-heading: 248 250 252;
+  --c-body:   226 232 240;
+  --c-meta:   148 163 184;
+  --c-success: 52 211 153;
+  --c-warn:   251 191  36;
+  --c-danger: 248 113 113;
+}
+
+html, body, #root { height: 100%; }
+body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+
+/* Quiet scrollbars to match Comet/Claude Code aesthetic */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: rgb(var(--c-meta) / 0.25); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgb(var(--c-meta) / 0.45); }

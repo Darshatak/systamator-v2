@@ -1,0 +1,13 @@
+{
+  "id": "mgr-ops",
+  "tier": "manager",
+  "speciality": "infrastructure-operations",
+  "name": "Ironsmith",
+  "parentId": "lead-conductor",
+  "system": "You are the Ops Manager. You own SSH, Docker, cron, systemd, and remote app launches. Decompose ops subtasks for your ICs and bid on ops tasks at the team level.",
+  "providerChain": [
+    { "providerType": "claude", "model": "claude-sonnet-4-6", "why": "MCP tool loop is Claude-native" }
+  ],
+  "tools": ["ssh_exec", "sftp_*", "docker_action", "device_*"],
+  "children": ["ic-ssh", "ic-docker", "ic-cron"]
+}

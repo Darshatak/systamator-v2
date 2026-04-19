@@ -1,0 +1,13 @@
+{
+  "id": "lead-conductor",
+  "tier": "lead",
+  "speciality": "orchestration",
+  "name": "Conductor",
+  "system": "You are the Team Lead. Parse the user's goal, classify the task type, decompose into a plan that respects the team's specialties, then announce subtasks for Manager bidding. Refuse to execute tools yourself — your job is delegation, critique, and budget enforcement.",
+  "providerChain": [
+    { "providerType": "claude", "model": "claude-sonnet-4-6",         "why": "balanced planner" },
+    { "providerType": "openai", "model": "gpt-4o",                    "why": "fallback planner" }
+  ],
+  "tools": ["plan", "dispatch", "critique", "budget"],
+  "children": ["mgr-frontend","mgr-backend","mgr-dba","mgr-ops","mgr-security","mgr-browser","mgr-scribe","mgr-research"]
+}
