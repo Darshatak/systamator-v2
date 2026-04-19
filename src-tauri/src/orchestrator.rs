@@ -14,6 +14,8 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use crate::db::DbState;
+use crate::keychain;
+use crate::cli_providers;
 
 // Verbs that should NEVER auto-execute. Steps whose label or input
 // matches any of these flip to 'awaiting_user' so the Inbox surfaces
@@ -107,6 +109,79 @@ impl WithDep for PlannedStep {
     fn with_dep(mut self, idx: usize) -> Self { self.depends_on.push(idx); self }
 }
 
+// ── LLM Conductor ───────────────────────────────────────────────────────
+
+const PLANNER_SYSTEM: &str = r#"You are the Conductor — Systamator's Team Lead. Decompose the user's goal into 1–4 concrete steps and return STRICT JSON only (no markdown, no commentary).
+
+Schema:
+{
+  "taskType":   "research" | "ops" | "writing" | "casual",
+  "conductorId":"lead-conductor",
+  "steps": [{
+    "kind":      "tool" | "llm",
+    "label":     string,
+    "agentRole": "ic-ssh" | "mgr-ops" | "scribe" | "scout-web",
+    "dependsOn": [int],
+    "input":     {…}
+  }]
+}
+
+Rules:
+- Use ic-ssh / mgr-ops for remote shell, docker, files via SSH.
+- Use scout-web for web search / page reads / research.
+- Use scribe for any writing or final report.
+- Mark destructive ops (rm, drop, shutdown, force-push) with kind="tool" so the orchestrator's guard prompts the user.
+- Return ONLY the JSON object, nothing else."#;
+
+async fn plan_via_llm(goal: &str) -> Result<PlannedGoal, String> {
+    let raw = if let Some(key) = keychain_get_provider("claude") {
+        anthropic_plan(&key, goal).await?
+    } else if let Ok(out) = cli_providers::cli_exec("claude".into(), format!("{PLANNER_SYSTEM}\n\nGOAL:\n{goal}")) {
+        if out.exit_code != 0 { return Err(format!("claude CLI exit {}: {}", out.exit_code, out.stderr)); }
+        out.stdout
+    } else {
+        return Err("no Anthropic API key in keychain and Claude CLI not usable".into());
+    };
+
+    // Strip ``` fences if the model added them despite instructions.
+    let trimmed = raw.trim();
+    let json_text = trimmed
+        .strip_prefix("```json").unwrap_or(trimmed)
+        .strip_prefix("```").unwrap_or(trimmed)
+        .trim_end_matches("```").trim();
+    let parsed: PlannedGoal = serde_json::from_str(json_text)
+        .map_err(|e| format!("plan parse: {e} — raw: {}", &json_text[..json_text.len().min(160)]))?;
+    if parsed.steps.is_empty() { return Err("plan returned 0 steps".into()); }
+    Ok(parsed)
+}
+
+fn keychain_get_provider(name: &str) -> Option<String> {
+    keychain::keychain_get("providers".into(), name.into()).filter(|s| !s.starts_with("__") && !s.is_empty())
+}
+
+async fn anthropic_plan(api_key: &str, goal: &str) -> Result<String, String> {
+    let body = serde_json::json!({
+        "model":      "claude-haiku-4-5-20251001",
+        "max_tokens": 1024,
+        "system":     PLANNER_SYSTEM,
+        "messages":   [{ "role": "user", "content": goal }],
+    });
+    let res = reqwest::Client::new()
+        .post("https://api.anthropic.com/v1/messages")
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .json(&body).send().await.map_err(|e| format!("anthropic: {e}"))?;
+    if !res.status().is_success() {
+        return Err(format!("anthropic {}: {}", res.status(), res.text().await.unwrap_or_default()));
+    }
+    let v: serde_json::Value = res.json().await.map_err(|e| format!("anthropic body: {e}"))?;
+    let text = v["content"].as_array()
+        .and_then(|arr| arr.iter().find_map(|b| if b["type"] == "text" { b["text"].as_str() } else { None }))
+        .ok_or("anthropic: no text block")?
+        .to_string();
+    Ok(text)
+}
+
 fn json_str<'a, I: IntoIterator<Item = (&'static str, &'a str)>>(pairs: I) -> serde_json::Value {
     let mut o = serde_json::Map::new();
     for (k, v) in pairs { o.insert(k.to_string(), serde_json::Value::String(v.to_string())); }
@@ -125,7 +200,13 @@ pub struct StartRunResult { pub run_id: String, pub plan: PlannedGoal }
 
 #[tauri::command]
 pub async fn run_start(state: tauri::State<'_, DbState>, input: StartRunInput) -> Result<StartRunResult, String> {
-    let plan = plan_for_goal(&input.goal);
+    // Conductor: real LLM first (Anthropic API key from keychain → Claude
+    // CLI fallback), heuristic if both fail. A goal NEVER blocks on
+    // planner failure — we'd rather run a simple plan than no plan.
+    let plan = match plan_via_llm(&input.goal).await {
+        Ok(p)  => p,
+        Err(e) => { eprintln!("[orchestrator] LLM plan failed → heuristic: {e}"); plan_for_goal(&input.goal) }
+    };
 
     let guard = state.pool.lock().await;
     let pool  = guard.as_ref().ok_or("db not connected — start Postgres + restart the app")?;
