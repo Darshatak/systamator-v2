@@ -1,48 +1,57 @@
+// Providers — both API-key signin and CLI signin in one place.
+
 import { useEffect, useState } from 'react'
-import { Sparkles, Bot, Cpu, Brain, Loader2, Check, KeyRound } from 'lucide-react'
+import { Sparkles, Bot, Cpu, Brain, Loader2, Check, KeyRound, Terminal, ExternalLink } from 'lucide-react'
 import clsx from 'clsx'
 import { kcGet, kcSet, KC_NS } from '@/lib/keychain'
 import { isDesktop } from '@/lib/ipc'
+import { cliDetect, cliLoginOpen, type CliDetectResult, type CliInfo } from '@/lib/api'
 import { Card, Button, Chip } from '@/components/ui'
 
 interface Provider {
   id:    string
   name:  string
   type:  'claude' | 'openai' | 'gemini' | 'ollama' | 'xai' | 'mistral'
+  cliKey:'claude' | 'codex' | 'gemini' | 'opencode' | null
   icon:  typeof Sparkles
   hint:  string
   blurb: string
 }
 
 const PROVIDERS: Provider[] = [
-  { id: 'claude',  name: 'Claude (Anthropic)', type: 'claude',  icon: Sparkles, hint: 'sk-ant-…',                       blurb: 'Best for code, ops, long tool loops, MCP.' },
-  { id: 'openai',  name: 'OpenAI / GPT',       type: 'openai',  icon: Bot,      hint: 'sk-…',                            blurb: 'General-purpose, structured output.' },
-  { id: 'gemini',  name: 'Gemini (Google)',    type: 'gemini',  icon: Brain,    hint: 'AI Studio key',                   blurb: 'Long context, deep research, multimodal.' },
-  { id: 'ollama',  name: 'Ollama (local)',     type: 'ollama',  icon: Cpu,      hint: 'http://localhost:11434',          blurb: 'Run models on your machine; no cloud.' },
-  { id: 'xai',     name: 'xAI / Grok',         type: 'xai',     icon: Sparkles, hint: 'xai-…',                           blurb: 'Top SWE-bench coding throughput.' },
-  { id: 'mistral', name: 'Mistral',            type: 'mistral', icon: Bot,      hint: 'mistral-…',                       blurb: 'Cost-efficient European alternative.' },
+  { id: 'claude',  name: 'Claude (Anthropic)', type: 'claude',  cliKey: 'claude',   icon: Sparkles, hint: 'sk-ant-…',                blurb: 'Best for code, ops, long tool loops, MCP.' },
+  { id: 'openai',  name: 'OpenAI / GPT',       type: 'openai',  cliKey: 'codex',    icon: Bot,      hint: 'sk-… or codex CLI',       blurb: 'General-purpose; sign in via OpenAI Codex CLI.' },
+  { id: 'gemini',  name: 'Gemini (Google)',    type: 'gemini',  cliKey: 'gemini',   icon: Brain,    hint: 'AI Studio key or CLI',    blurb: 'Long context, deep research, multimodal.' },
+  { id: 'ollama',  name: 'Ollama (local)',     type: 'ollama',  cliKey: null,       icon: Cpu,      hint: 'http://localhost:11434',  blurb: 'Run models on your machine; no cloud.' },
+  { id: 'xai',     name: 'xAI / Grok',         type: 'xai',     cliKey: null,       icon: Sparkles, hint: 'xai-…',                   blurb: 'Top SWE-bench coding throughput.' },
+  { id: 'mistral', name: 'Mistral',            type: 'mistral', cliKey: null,       icon: Bot,      hint: 'mistral-…',               blurb: 'Cost-efficient European alternative.' },
 ]
 
 export function ProvidersTab() {
+  const [cli, setCli] = useState<CliDetectResult | null>(null)
+  useEffect(() => { if (isDesktop()) cliDetect().then(setCli).catch(() => setCli(null)) }, [])
+
   return (
     <div className="max-w-3xl">
       <h2 className="text-[18px] font-bold text-heading mb-1">Providers</h2>
       <p className="text-[12px] text-meta mb-5">
-        One row per AI provider. Secrets go straight to the OS keychain — never disk, never logs.
+        Two paths per provider: <strong>API key</strong> (stored in OS keychain) or <strong>CLI sign-in</strong> (uses the provider's official command-line OAuth).
       </p>
       <div className="grid grid-cols-2 gap-3">
-        {PROVIDERS.map(p => <Row key={p.id} provider={p} />)}
+        {PROVIDERS.map(p => <Row key={p.id} provider={p} cli={cli} />)}
       </div>
     </div>
   )
 }
 
-function Row({ provider }: { provider: Provider }) {
+function Row({ provider, cli }: { provider: Provider; cli: CliDetectResult | null }) {
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState('')
   const [hasKey, setHasKey] = useState<boolean | null>(null)
   const [saving, setSaving] = useState(false)
+  const [openingCli, setOpeningCli] = useState(false)
   const Icon = provider.icon
+  const cliInfo: CliInfo | null = provider.cliKey && cli ? cli[provider.cliKey] : null
 
   useEffect(() => {
     if (!isDesktop()) { setHasKey(false); return }
@@ -56,6 +65,12 @@ function Row({ provider }: { provider: Provider }) {
     finally { setSaving(false) }
   }
 
+  async function openCliLogin() {
+    if (!provider.cliKey) return
+    setOpeningCli(true)
+    try { await cliLoginOpen(provider.cliKey) } finally { setOpeningCli(false) }
+  }
+
   return (
     <Card>
       <div className="flex items-start gap-3">
@@ -63,17 +78,27 @@ function Row({ provider }: { provider: Provider }) {
           <Icon size={16} />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[13px] font-semibold text-heading">{provider.name}</span>
-            {hasKey && <Chip tone="success" icon={<Check size={9} />}>connected</Chip>}
+            {hasKey && <Chip tone="success" icon={<Check size={9} />}>API key</Chip>}
+            {cliInfo?.installed && <Chip tone="info" icon={<Terminal size={9} />}>{`CLI ${cliInfo.version ?? 'detected'}`}</Chip>}
           </div>
           <div className="text-[11px] text-meta mt-0.5 leading-relaxed">{provider.blurb}</div>
           <div className="text-[10px] text-meta font-mono mt-1">{provider.hint}</div>
         </div>
-        <Button size="sm" variant={hasKey ? 'soft' : 'primary'} onClick={() => setEditing(v => !v)}>
-          {hasKey ? 'Update' : 'Sign in'}
-        </Button>
+        <div className="flex flex-col gap-1.5">
+          <Button size="sm" variant={hasKey ? 'soft' : 'primary'} onClick={() => setEditing(v => !v)}>
+            {hasKey ? 'Update' : 'Sign in'}
+          </Button>
+          {provider.cliKey && (
+            <Button size="sm" variant="ghost" onClick={openCliLogin} disabled={openingCli}
+                    icon={openingCli ? <Loader2 size={11} className="animate-spin" /> : <Terminal size={11} />}>
+              {cliInfo?.installed ? 'CLI login' : 'Install CLI'}
+            </Button>
+          )}
+        </div>
       </div>
+
       {editing && (
         <div className="mt-3 flex items-center gap-2">
           <KeyRound size={12} className="text-meta flex-shrink-0" />
@@ -83,6 +108,13 @@ function Row({ provider }: { provider: Provider }) {
           <Button size="sm" variant="primary" onClick={save} disabled={!value || saving}>
             {saving ? <Loader2 size={11} className="animate-spin" /> : 'Save'}
           </Button>
+        </div>
+      )}
+
+      {provider.cliKey && cliInfo && !cliInfo.installed && (
+        <div className="mt-3 text-[11px] text-meta border-t border-white/8 pt-3 flex items-start gap-2">
+          <ExternalLink size={11} className="mt-0.5 flex-shrink-0" />
+          <span>{cliInfo.loginHint ?? `Install the ${provider.cliKey} CLI to enable OAuth sign-in.`}</span>
         </div>
       )}
     </Card>

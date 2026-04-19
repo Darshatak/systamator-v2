@@ -17,7 +17,7 @@ export const runStart = (goal: string) =>
   invoke<{ runId: string; plan: PlannedGoal }>('run_start', { input: { goal } })
 
 export const runTick = (runId: string) =>
-  invoke<{ stepId: string | null; status: 'advanced' | 'idle' | 'done'; runDone: boolean }>('run_tick', { runId })
+  invoke<{ stepId: string | null; status: 'advanced' | 'idle' | 'done' | 'awaiting_user'; runDone: boolean }>('run_tick', { runId })
 
 export const runList = (limit = 50) =>
   invoke<Run[]>('run_list', { limit })
@@ -33,3 +33,24 @@ export const agentSeedDefaults = () => invoke<number>('agent_seed_defaults', {})
 // ── DB status ───────────────────────────────────────────────────────────
 
 export const dbStatus = () => invoke<{ connected: boolean; message: string }>('db_status', {})
+
+// ── Orchestrator extensions ─────────────────────────────────────────────
+
+export const stepApprove     = (stepId: string) => invoke<void>('step_approve', { stepId })
+export const skillDistillRun = (runId: string)  => invoke<string | null>('skill_distill_run', { runId })
+
+// ── CLI providers ───────────────────────────────────────────────────────
+
+export interface CliInfo {
+  installed: boolean
+  path:      string | null
+  version:   string | null
+  loginHint: string | null
+}
+export interface CliDetectResult {
+  claude: CliInfo; codex: CliInfo; gemini: CliInfo; opencode: CliInfo
+}
+export const cliDetect    = () => invoke<CliDetectResult>('cli_detect', {})
+export const cliLoginOpen = (provider: string) => invoke<string>('cli_login_open', { provider })
+export const cliExec      = (provider: string, prompt: string) =>
+  invoke<{ stdout: string; stderr: string; exitCode: number; provider: string }>('cli_exec', { provider, prompt })

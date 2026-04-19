@@ -28,6 +28,7 @@ mod pii_guard;
 mod web_scrape;
 mod web_search;
 mod agents;
+mod cli_providers;
 mod orchestrator;
 mod runs;
 mod skills;
@@ -113,6 +114,11 @@ pub fn run() {
             runs::run_finish,
             orchestrator::run_start,
             orchestrator::run_tick,
+            orchestrator::step_approve,
+            orchestrator::skill_distill_run,
+            cli_providers::cli_detect,
+            cli_providers::cli_login_open,
+            cli_providers::cli_exec,
             skills::skill_list,
             skills::skill_record,
             skills::skill_search,

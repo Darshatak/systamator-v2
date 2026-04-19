@@ -15,6 +15,23 @@ use uuid::Uuid;
 
 use crate::db::DbState;
 
+// Verbs that should NEVER auto-execute. Steps whose label or input
+// matches any of these flip to 'awaiting_user' so the Inbox surfaces
+// an approval card before they run. Deliberately narrow — false
+// positives waste user attention.
+const DESTRUCTIVE_VERBS: &[&str] = &[
+    "rm ", "rm -", "drop table", "drop database", "shutdown", "reboot",
+    "halt", "kill -9", "git push --force", "git reset --hard",
+    "docker rm -f", "checkout", "delete from", "truncate ",
+];
+
+fn is_destructive(label: &str, input: &serde_json::Value) -> bool {
+    let l = label.to_lowercase();
+    if DESTRUCTIVE_VERBS.iter().any(|v| l.contains(v)) { return true; }
+    let txt = input.to_string().to_lowercase();
+    DESTRUCTIVE_VERBS.iter().any(|v| txt.contains(v))
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PlannedStep {
@@ -210,6 +227,15 @@ pub async fn run_tick(state: tauri::State<'_, DbState>, run_id: String) -> Resul
         return Ok(TickResult { step_id: None, status: "idle".into(), run_done: false });
     };
 
+    // 2a. Destructive guard — flip to awaiting_user, surface in Inbox.
+    if is_destructive(&label, &input) {
+        sqlx::query("UPDATE steps SET status='awaiting_user' WHERE id=$1").bind(step_id)
+            .execute(pool).await.map_err(|e| e.to_string())?;
+        sqlx::query("UPDATE runs SET status='awaiting_user' WHERE id=$1 AND status='running'")
+            .bind(run_uuid).execute(pool).await.ok();
+        return Ok(TickResult { step_id: Some(step_id.to_string()), status: "awaiting_user".into(), run_done: false });
+    }
+
     // 2. running
     sqlx::query("UPDATE steps SET status='running', started_at=now() WHERE id=$1").bind(step_id)
         .execute(pool).await.map_err(|e| e.to_string())?;
@@ -241,6 +267,61 @@ pub async fn run_tick(state: tauri::State<'_, DbState>, run_id: String) -> Resul
     }
 
     Ok(TickResult { step_id: Some(step_id.to_string()), status: "advanced".into(), run_done })
+}
+
+// Approve a step that's awaiting_user — flip back to pending so the
+// next tick picks it up. Inbox UI calls this.
+#[tauri::command]
+pub async fn step_approve(state: tauri::State<'_, DbState>, step_id: String) -> Result<(), String> {
+    let guard = state.pool.lock().await;
+    let pool  = guard.as_ref().ok_or("db not connected")?;
+    let id = Uuid::parse_str(&step_id).map_err(|e| e.to_string())?;
+    sqlx::query("UPDATE steps SET status='pending' WHERE id=$1 AND status='awaiting_user'")
+        .bind(id).execute(pool).await.map_err(|e| e.to_string())?;
+    sqlx::query("UPDATE runs SET status='running' WHERE id=(SELECT run_id FROM steps WHERE id=$1) AND status='awaiting_user'")
+        .bind(id).execute(pool).await.ok();
+    Ok(())
+}
+
+// Distill a Skill row capturing the goal pattern + step recipe so a
+// future similar goal can reuse it. Local Postgres only for now;
+// OpenSpace export comes later.
+#[tauri::command]
+pub async fn skill_distill_run(state: tauri::State<'_, DbState>, run_id: String) -> Result<Option<String>, String> {
+    let guard = state.pool.lock().await;
+    let pool  = guard.as_ref().ok_or("db not connected")?;
+    let run_uuid = Uuid::parse_str(&run_id).map_err(|e| e.to_string())?;
+
+    let run = sqlx::query("SELECT goal, task_type, status FROM runs WHERE id=$1")
+        .bind(run_uuid).fetch_one(pool).await.map_err(|e| e.to_string())?;
+    let status: String = run.get("status");
+    if status != "done" { return Ok(None); }
+    let goal:      String         = run.get("goal");
+    let task_type: Option<String> = run.try_get("task_type").ok();
+
+    let steps = sqlx::query("SELECT kind, label, agent_id, input FROM steps WHERE run_id=$1 AND status='done' ORDER BY started_at")
+        .bind(run_uuid).fetch_all(pool).await.map_err(|e| e.to_string())?;
+    if steps.is_empty() { return Ok(None); }
+
+    let recipe: serde_json::Value = serde_json::Value::Array(steps.iter().map(|r| {
+        serde_json::json!({
+            "kind":  r.get::<String, _>("kind"),
+            "label": r.get::<String, _>("label"),
+            "agent": r.try_get::<Option<String>, _>("agent_id").unwrap_or(None),
+            "input": r.get::<serde_json::Value, _>("input"),
+        })
+    }).collect());
+
+    let title = format!("How to: {}", &goal[..goal.len().min(80)]);
+    let id = Uuid::new_v4();
+    sqlx::query("INSERT INTO skills(id, agent_id, title, description, trigger, recipe, origin) VALUES ($1, NULL, $2, $3, $4, $5, 'learned')")
+        .bind(id)
+        .bind(&title)
+        .bind(format!("Distilled from run {}. {} steps. Task type: {}.", &run_id[..8], steps.len(), task_type.unwrap_or_default()))
+        .bind(&goal.to_lowercase())
+        .bind(&recipe)
+        .execute(pool).await.map_err(|e| format!("insert skill: {e}"))?;
+    Ok(Some(id.to_string()))
 }
 
 fn simulate_execution(kind: &str, label: &str, input: &serde_json::Value) -> serde_json::Value {

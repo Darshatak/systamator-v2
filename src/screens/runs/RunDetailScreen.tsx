@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { runGet, runTick } from '@/lib/api'
+import { runGet, runTick, skillDistillRun } from '@/lib/api'
 import type { Step } from '@/types/domain'
 import { Card, Chip, TopBar, StatusDot } from '@/components/ui'
 import { ChevronLeft, Clock, Bot, Wrench, Brain, GitFork, CheckCircle2, Loader2, XCircle } from 'lucide-react'
@@ -34,8 +34,13 @@ export default function RunDetailScreen() {
         try {
           const r = await runTick(id!)
           qc.invalidateQueries({ queryKey: ['run', id] })
-          if (r.runDone) { setAutorun(false); break }
-          if (r.status === 'idle') break
+          if (r.runDone) {
+            setAutorun(false)
+            // Distill a Skill so the next similar goal can replay this recipe.
+            try { await skillDistillRun(id!) } catch { /* best-effort */ }
+            break
+          }
+          if (r.status === 'idle' || r.status === 'awaiting_user') break
         } catch { break }
         await new Promise(r => (tickRef.current = window.setTimeout(r, 350)))
       }

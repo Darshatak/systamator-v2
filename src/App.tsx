@@ -14,6 +14,7 @@ const FleetScreen     = lazy(() => import('./screens/fleet/FleetScreen'))
 const AgentsScreen    = lazy(() => import('./screens/agents/AgentsScreen'))
 const SkillsScreen    = lazy(() => import('./screens/skills/SkillsScreen'))
 const SettingsScreen  = lazy(() => import('./screens/settings/SettingsScreen'))
+const InboxScreen     = lazy(() => import('./screens/inbox/InboxScreen'))
 
 const NAV = [
   { to: '/',         icon: Home,     label: 'Home' },
@@ -107,18 +108,14 @@ export default function App() {
             <Cog size={14} className="flex-shrink-0" />
             {expanded && <span className="font-medium">Settings</span>}
           </NavLink>
-          <button
-            className={clsx(
-              'w-full flex items-center gap-3 px-3 h-9 rounded-xl text-[12px] text-meta hover:text-heading hover:bg-white/5',
-              !expanded && 'justify-center px-0',
-            )}
-          >
+          <NavLink to="/inbox" className={({ isActive }) => clsx(
+            'flex items-center gap-3 px-3 h-9 rounded-xl text-[12px]',
+            !expanded && 'justify-center px-0',
+            isActive ? 'bg-[rgb(var(--c-primary)/0.16)] text-[rgb(var(--c-primary-2))]' : 'text-meta hover:text-heading hover:bg-white/5',
+          )}>
             <Inbox size={14} className="flex-shrink-0" />
-            {expanded && <>
-              <span className="font-medium">Inbox</span>
-              <span className="ml-auto text-[10px] text-meta bg-white/8 rounded-full px-1.5 py-0.5">0</span>
-            </>}
-          </button>
+            {expanded && <span className="font-medium">Inbox</span>}
+          </NavLink>
 
           {!expanded && (
             <button onClick={() => { setExpanded(true); localStorage.setItem('rail.expanded', 'true') }}
@@ -140,6 +137,7 @@ export default function App() {
             <Route path="/agents"    element={<AgentsScreen />} />
             <Route path="/skills"    element={<SkillsScreen />} />
             <Route path="/settings/*"element={<SettingsScreen />} />
+            <Route path="/inbox"     element={<InboxScreen />} />
             <Route path="*"          element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>
