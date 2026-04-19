@@ -10,10 +10,10 @@ export default defineConfig({
   resolve: { alias: { '@': path.resolve(__dirname, 'src') } },
   clearScreen: false,
   server: {
-    port: 1420,
+    port: 1430,
     strictPort: true,
     host: HOST ?? false,
-    hmr: HOST ? { protocol: 'ws', host: HOST, port: 1421 } : undefined,
+    hmr: HOST ? { protocol: 'ws', host: HOST, port: 1431 } : undefined,
     watch: { ignored: ['**/src-tauri/**'] },
   },
   envPrefix: ['VITE_', 'TAURI_'],
