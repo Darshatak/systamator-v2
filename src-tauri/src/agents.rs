@@ -81,6 +81,50 @@ pub struct OutcomeReport {
     pub wall_ms:   i64,
 }
 
+/// Seed the default agent roster from src-tauri/agents/*.agent.json.
+/// Idempotent (ON CONFLICT DO UPDATE). Called once on first launch from
+/// the frontend after the user signs into a provider.
+#[tauri::command]
+pub async fn agent_seed_defaults(state: tauri::State<'_, DbState>) -> Result<usize, String> {
+    let guard = state.pool.lock().await;
+    let pool  = guard.as_ref().ok_or("db not connected")?;
+
+    // Bundle the JSON manifests into the binary so we don't depend on
+    // having the source tree at runtime.
+    let manifests: &[(&str, &str)] = &[
+        ("lead-conductor", include_str!("../agents/conductor.agent.json")),
+        ("mgr-ops",        include_str!("../agents/mgr-ops.agent.json")),
+        ("ic-ssh",         include_str!("../agents/ic-ssh.agent.json")),
+    ];
+
+    let mut count = 0;
+    for (id, raw) in manifests {
+        let manifest: serde_json::Value = serde_json::from_str(raw).map_err(|e| format!("{id}: {e}"))?;
+        let tier = manifest["tier"].as_str().unwrap_or("ic").to_string();
+        let speciality = manifest["speciality"].as_str().unwrap_or(id).to_string();
+        let parent_id = manifest["parentId"].as_str().map(String::from);
+
+        sqlx::query("
+            INSERT INTO agents(id, tier, speciality, parent_id, manifest)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (id) DO UPDATE SET
+              tier = EXCLUDED.tier,
+              speciality = EXCLUDED.speciality,
+              parent_id = EXCLUDED.parent_id,
+              manifest = EXCLUDED.manifest,
+              updated_at = now()
+        ")
+        .bind(id)
+        .bind(&tier)
+        .bind(&speciality)
+        .bind(&parent_id)
+        .bind(&manifest)
+        .execute(pool).await.map_err(|e| format!("upsert {id}: {e}"))?;
+        count += 1;
+    }
+    Ok(count)
+}
+
 /// EWMA-update an agent's expertiseScore + counters after a step.
 /// EWMA constant 0.2 — tuned so 5 wins flip a fresh agent from 0.5 → ~0.85.
 #[tauri::command]

@@ -28,6 +28,7 @@ mod pii_guard;
 mod web_scrape;
 mod web_search;
 mod agents;
+mod orchestrator;
 mod runs;
 mod skills;
 mod resources;
@@ -104,11 +105,14 @@ pub fn run() {
             agents::agent_save,
             agents::agent_delete,
             agents::agent_record_outcome,
+            agents::agent_seed_defaults,
             runs::run_list,
             runs::run_create,
             runs::run_get,
             runs::run_append_step,
             runs::run_finish,
+            orchestrator::run_start,
+            orchestrator::run_tick,
             skills::skill_list,
             skills::skill_record,
             skills::skill_search,

@@ -7,12 +7,13 @@ import {
 import clsx from 'clsx'
 import { Palette } from './components/palette/Palette'
 
-const HomeScreen     = lazy(() => import('./screens/home/HomeScreen'))
-const GoalsScreen    = lazy(() => import('./screens/goals/GoalsScreen'))
-const FleetScreen    = lazy(() => import('./screens/fleet/FleetScreen'))
-const AgentsScreen   = lazy(() => import('./screens/agents/AgentsScreen'))
-const SkillsScreen   = lazy(() => import('./screens/skills/SkillsScreen'))
-const SettingsScreen = lazy(() => import('./screens/settings/SettingsScreen'))
+const HomeScreen      = lazy(() => import('./screens/home/HomeScreen'))
+const GoalsScreen     = lazy(() => import('./screens/goals/GoalsScreen'))
+const RunDetailScreen = lazy(() => import('./screens/runs/RunDetailScreen'))
+const FleetScreen     = lazy(() => import('./screens/fleet/FleetScreen'))
+const AgentsScreen    = lazy(() => import('./screens/agents/AgentsScreen'))
+const SkillsScreen    = lazy(() => import('./screens/skills/SkillsScreen'))
+const SettingsScreen  = lazy(() => import('./screens/settings/SettingsScreen'))
 
 const NAV = [
   { to: '/',         icon: Home,     label: 'Home' },
@@ -134,6 +135,7 @@ export default function App() {
           <Routes>
             <Route path="/"          element={<HomeScreen onPalette={() => setPaletteOpen(true)} />} />
             <Route path="/goals"     element={<GoalsScreen />} />
+            <Route path="/goals/:id" element={<RunDetailScreen />} />
             <Route path="/fleet"     element={<FleetScreen />} />
             <Route path="/agents"    element={<AgentsScreen />} />
             <Route path="/skills"    element={<SkillsScreen />} />

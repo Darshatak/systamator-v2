@@ -10,7 +10,8 @@ export default function HomeScreen({ onPalette }: { onPalette: () => void }) {
   function submit() {
     const g = draft.trim()
     if (!g) return
-    navigate('/goals?new=1&prefill=' + encodeURIComponent(g))
+    // Hand the prefilled draft to GoalsScreen — it owns the actual run-start.
+    navigate('/goals?prefill=' + encodeURIComponent(g))
   }
 
   return (
