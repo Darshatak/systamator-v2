@@ -134,9 +134,21 @@ Rules:
 - Return ONLY the JSON object, nothing else."#;
 
 async fn plan_via_llm(goal: &str) -> Result<PlannedGoal, String> {
+    // M2 — skill recall before planning. Find learned skills whose stored
+    // trigger overlaps with the goal; include the top match in the
+    // planner prompt as a "previous successful approach". Skips silently
+    // when the DB isn't reachable.
+    let recalled = recall_skill_hint(goal).await.unwrap_or_default();
+
+    let user_prompt = if recalled.is_empty() {
+        goal.to_string()
+    } else {
+        format!("Goal:\n{goal}\n\nPrevious successful approaches the team learned:\n{recalled}\n\nReuse / adapt them when relevant.")
+    };
+
     let raw = if let Some(key) = keychain_get_provider("claude") {
-        anthropic_plan(&key, goal).await?
-    } else if let Ok(out) = cli_providers::cli_exec("claude".into(), format!("{PLANNER_SYSTEM}\n\nGOAL:\n{goal}")) {
+        anthropic_plan(&key, &user_prompt).await?
+    } else if let Ok(out) = cli_providers::cli_exec("claude".into(), format!("{PLANNER_SYSTEM}\n\n{user_prompt}")) {
         if out.exit_code != 0 { return Err(format!("claude CLI exit {}: {}", out.exit_code, out.stderr)); }
         out.stdout
     } else {
@@ -157,6 +169,31 @@ async fn plan_via_llm(goal: &str) -> Result<PlannedGoal, String> {
 
 fn keychain_get_provider(name: &str) -> Option<String> {
     keychain::keychain_get("providers".into(), name.into()).filter(|s| !s.starts_with("__") && !s.is_empty())
+}
+
+// Best-effort skill recall — opens its own DB pool via env so we don't
+// have to thread DbState through every helper. fastembed/OpenSpace
+// semantic search lands in a follow-up commit; for now use literal
+// keyword overlap on the goal text.
+async fn recall_skill_hint(goal: &str) -> Result<String, String> {
+    let url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://systamator:systamator@127.0.0.1:5435/systamator_v2".into());
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(std::time::Duration::from_secs(2))
+        .connect(&url).await.map_err(|e| e.to_string())?;
+    let needle = format!("%{}%", goal.to_lowercase().chars().take(40).collect::<String>());
+    let rows = sqlx::query("SELECT title, description, recipe FROM skills WHERE LOWER(trigger) LIKE $1 OR LOWER(title) LIKE $1 ORDER BY success_count DESC LIMIT 3")
+        .bind(&needle).fetch_all(&pool).await.map_err(|e| e.to_string())?;
+    if rows.is_empty() { return Ok(String::new()); }
+    let mut out = String::new();
+    for r in rows {
+        let title:       String              = r.get("title");
+        let description: String              = r.get("description");
+        let recipe:      serde_json::Value   = r.get("recipe");
+        out.push_str(&format!("• {title} — {description}\n  recipe: {recipe}\n"));
+    }
+    Ok(out)
 }
 
 async fn anthropic_plan(api_key: &str, goal: &str) -> Result<String, String> {

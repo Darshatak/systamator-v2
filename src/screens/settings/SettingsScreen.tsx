@@ -1,13 +1,15 @@
 import { Routes, Route, NavLink, Navigate } from 'react-router-dom'
-import { User, KeyRound, Server, Users, SlidersHorizontal } from 'lucide-react'
+import { User, KeyRound, Server, Users, SlidersHorizontal, Plug } from 'lucide-react'
 import { ProvidersTab } from './ProvidersTab'
+import { McpTab } from './McpTab'
 import clsx from 'clsx'
 import { TopBar } from '@/components/ui'
 
 const TABS = [
   { to: '/settings/account',   label: 'Account',   icon: User,     hint: 'Profile, theme, shortcuts' },
-  { to: '/settings/providers', label: 'Providers', icon: KeyRound, hint: 'AI provider keys' },
-  { to: '/settings/fleet',     label: 'Fleet',     icon: Server,   hint: 'SSH, Docker, DB, MCP' },
+  { to: '/settings/providers', label: 'Providers', icon: KeyRound, hint: 'AI provider keys + CLI' },
+  { to: '/settings/mcp',       label: 'MCP',       icon: Plug,     hint: 'Featured + registered MCPs' },
+  { to: '/settings/fleet',     label: 'Fleet',     icon: Server,   hint: 'SSH, Docker, DB' },
   { to: '/settings/agents',    label: 'Agents',    icon: Users,    hint: 'Roster + budgets' },
   { to: '/settings/advanced',  label: 'Advanced',  icon: SlidersHorizontal, hint: 'Cache, logs, export' },
 ] as const
@@ -35,6 +37,7 @@ export default function SettingsScreen() {
           <Routes>
             <Route path="account"   element={<Stub title="Account" />} />
             <Route path="providers" element={<ProvidersTab />} />
+            <Route path="mcp"       element={<McpTab />} />
             <Route path="fleet"     element={<Stub title="Fleet — see /fleet" />} />
             <Route path="agents"    element={<Stub title="Agents — see /agents" />} />
             <Route path="advanced"  element={<Stub title="Advanced" />} />
