@@ -121,7 +121,17 @@ pub async fn skill_reindex(state: tauri::State<'_, DbState>) -> Result<usize, St
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SkillBundle { pub version: u32, pub generated: String, pub skills: Vec<ExportedSkill> }
+pub struct SkillBundle {
+    pub version: u32,
+    pub generated: String,
+    pub skills: Vec<ExportedSkill>,
+    // Optional signature block. When present, `signature` must be the
+    // ed25519 signature of the bundle's `skills` array JSON, signed by
+    // the owner of `publicKey`. The importer strips these fields before
+    // computing the canonical payload for verification.
+    #[serde(default)] pub signature:  Option<String>,
+    #[serde(default)] pub public_key: Option<String>,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -148,14 +158,29 @@ pub async fn skill_export(state: tauri::State<'_, DbState>) -> Result<String, St
         recipe:       r.get("recipe"),
         origin:       r.get("origin"),
     }).collect();
-    let bundle = SkillBundle { version: 1, generated: chrono::Utc::now().to_rfc3339(), skills };
+    let bundle = SkillBundle { version: 1, generated: chrono::Utc::now().to_rfc3339(), skills, signature: None, public_key: None };
     serde_json::to_string_pretty(&bundle).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn skill_import(state: tauri::State<'_, DbState>, bundle_json: String) -> Result<usize, String> {
+pub async fn skill_import(app: tauri::AppHandle, state: tauri::State<'_, DbState>, bundle_json: String) -> Result<usize, String> {
     let bundle: SkillBundle = serde_json::from_str(&bundle_json).map_err(|e| format!("bundle parse: {e}"))?;
     if bundle.version != 1 { return Err(format!("unsupported bundle version: {}", bundle.version)); }
+
+    // Signed-bundle path — verify + tag skills as community-verified.
+    // Unsigned bundles still import (origin comes from the bundle itself),
+    // but nothing gets the 'community-verified' prestige.
+    let mut verified = false;
+    if let (Some(sig), Some(pk)) = (bundle.signature.as_ref(), bundle.public_key.as_ref()) {
+        let payload = serde_json::to_string(&bundle.skills).map_err(|e| e.to_string())?;
+        let ok = crate::trusted_keys::trusted_keys_verify(payload, sig.clone(), pk.clone())?;
+        if !ok { return Err("bundle signature invalid — refusing import".into()); }
+        if !crate::trusted_keys::is_key_trusted(&app, pk) {
+            return Err(format!("bundle signed with untrusted key — add {} to trusted keys first", pk.chars().take(12).collect::<String>()));
+        }
+        verified = true;
+    }
+
     let guard = state.pool.lock().await;
     let pool  = guard.as_ref().ok_or("db not connected")?;
     let mut added = 0usize;
@@ -165,10 +190,11 @@ pub async fn skill_import(state: tauri::State<'_, DbState>, bundle_json: String)
         if exists.is_some() { continue; }
         let embed_text = format!("{}\n{}\n{}", s.title, s.description, s.trigger.clone().unwrap_or_default());
         let embedding_json = embeddings::embed_text(&embed_text).ok().and_then(|v| serde_json::to_value(v).ok());
+        let effective_origin = if verified { "community-verified".to_string() } else { s.origin };
         sqlx::query("INSERT INTO skills(id, agent_id, title, description, trigger, precondition, recipe, origin, embedding) VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8)")
             .bind(Uuid::new_v4())
             .bind(&s.title).bind(&s.description).bind(&s.trigger)
-            .bind(&s.precondition).bind(&s.recipe).bind(&s.origin)
+            .bind(&s.precondition).bind(&s.recipe).bind(&effective_origin)
             .bind(&embedding_json)
             .execute(pool).await.map_err(|e| format!("insert '{}': {e}", s.title))?;
         added += 1;
@@ -177,12 +203,12 @@ pub async fn skill_import(state: tauri::State<'_, DbState>, bundle_json: String)
 }
 
 #[tauri::command]
-pub async fn skill_fetch_remote(state: tauri::State<'_, DbState>, url: String) -> Result<usize, String> {
+pub async fn skill_fetch_remote(app: tauri::AppHandle, state: tauri::State<'_, DbState>, url: String) -> Result<usize, String> {
     let normalised = url.replace("github.com", "raw.githubusercontent.com").replace("/blob/", "/");
     let res = reqwest::Client::new().get(&normalised).send().await.map_err(|e| format!("fetch: {e}"))?;
     if !res.status().is_success() { return Err(format!("fetch {} returned {}", normalised, res.status())); }
     let body = res.text().await.map_err(|e| format!("body: {e}"))?;
-    skill_import(state, body).await
+    skill_import(app, state, body).await
 }
 
 fn skill_from_row(r: &sqlx::postgres::PgRow) -> Skill {

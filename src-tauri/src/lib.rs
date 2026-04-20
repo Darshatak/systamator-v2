@@ -35,6 +35,7 @@ mod embeddings;
 mod importer;
 mod orchestrator;
 mod runs;
+mod trusted_keys;
 mod worktree;
 mod skills;
 mod resources;
@@ -153,6 +154,10 @@ pub fn run() {
             worktree::worktree_create,
             worktree::worktree_remove,
             worktree::worktree_list,
+            trusted_keys::trusted_keys_list,
+            trusted_keys::trusted_keys_add,
+            trusted_keys::trusted_keys_remove,
+            trusted_keys::trusted_keys_verify,
             skills::skill_list,
             skills::skill_record,
             skills::skill_search,

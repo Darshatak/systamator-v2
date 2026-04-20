@@ -5,6 +5,7 @@ import { Download, ArrowRightLeft, Check, Loader2, AlertTriangle } from 'lucide-
 import { invoke } from '@/lib/ipc'
 import { Card, Button, Chip } from '@/components/ui'
 import { DiagnosticsPanel } from './DiagnosticsPanel'
+import { TrustedKeysCard } from './TrustedKeysCard'
 
 interface ImportReport {
   v1Path: string; exists: boolean
@@ -72,6 +73,8 @@ export function AdvancedTab() {
           </div>
         )}
       </Card>
+
+      <TrustedKeysCard />
 
       <DiagnosticsPanel />
 
