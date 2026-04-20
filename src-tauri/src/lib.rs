@@ -158,6 +158,8 @@ pub fn run() {
             trusted_keys::trusted_keys_add,
             trusted_keys::trusted_keys_remove,
             trusted_keys::trusted_keys_verify,
+            trusted_keys::skill_keygen,
+            trusted_keys::skill_sign_bundle,
             skills::skill_list,
             skills::skill_record,
             skills::skill_search,

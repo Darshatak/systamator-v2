@@ -11,7 +11,9 @@
 // signed bundle's source as "community-verified".
 
 use base64::Engine;
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use rand::rngs::OsRng;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
@@ -86,6 +88,56 @@ pub fn is_key_trusted(app: &AppHandle, public_key_b64: &str) -> bool {
 /// `payload` produced by `public_key_b64`'s owner. Pure function —
 /// doesn't consult the trust store; caller checks is_key_trusted
 /// separately.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Keypair { pub public_key: String, pub private_key: String }
+
+/// Generate a fresh ed25519 keypair. Private key is the 32-byte seed
+/// (base64); public is also 32 bytes base64. Caller decides where to
+/// store the private half — we never persist it server-side.
+#[tauri::command]
+pub fn skill_keygen() -> Result<Keypair, String> {
+    let mut seed = [0u8; 32];
+    OsRng.fill_bytes(&mut seed);
+    let sk = SigningKey::from_bytes(&seed);
+    let vk = sk.verifying_key();
+    Ok(Keypair {
+        public_key:  base64::engine::general_purpose::STANDARD.encode(vk.as_bytes()),
+        private_key: base64::engine::general_purpose::STANDARD.encode(sk.as_bytes()),
+    })
+}
+
+/// Take a bundle JSON + private-key seed (base64), sign the bundle's
+/// skills array, and return the bundle with signature + publicKey
+/// populated. Authors pipe this to a file and publish.
+#[tauri::command]
+pub fn skill_sign_bundle(bundle_json: String, private_key_b64: String) -> Result<String, String> {
+    let seed_bytes = base64::engine::general_purpose::STANDARD.decode(&private_key_b64)
+        .map_err(|e| format!("privateKey not base64: {e}"))?;
+    if seed_bytes.len() != 32 { return Err(format!("privateKey must be 32 bytes, got {}", seed_bytes.len())); }
+    let seed_arr: [u8; 32] = seed_bytes.try_into().unwrap();
+    let sk = SigningKey::from_bytes(&seed_arr);
+    let vk = sk.verifying_key();
+
+    let mut bundle: serde_json::Value = serde_json::from_str(&bundle_json)
+        .map_err(|e| format!("bundle parse: {e}"))?;
+    // Strip any existing signature so re-signing is deterministic.
+    if let Some(obj) = bundle.as_object_mut() {
+        obj.remove("signature"); obj.remove("publicKey");
+    }
+    let skills = bundle.get("skills").cloned().ok_or("bundle missing `skills`")?;
+    let payload = serde_json::to_string(&skills).map_err(|e| e.to_string())?;
+
+    let sig = sk.sign(payload.as_bytes());
+    if let Some(obj) = bundle.as_object_mut() {
+        obj.insert("signature".into(),
+            serde_json::Value::String(base64::engine::general_purpose::STANDARD.encode(sig.to_bytes())));
+        obj.insert("publicKey".into(),
+            serde_json::Value::String(base64::engine::general_purpose::STANDARD.encode(vk.as_bytes())));
+    }
+    serde_json::to_string_pretty(&bundle).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn trusted_keys_verify(payload: String, signature_b64: String, public_key_b64: String) -> Result<bool, String> {
     let sig_bytes = base64::engine::general_purpose::STANDARD.decode(&signature_b64)

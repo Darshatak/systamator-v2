@@ -63,3 +63,4 @@ tiny_http = "0.12"
 # M5 — signed skill manifests. ed25519 is cheap to verify, keys are
 # 32 bytes, signatures 64 bytes — easy to paste into a JSON bundle.
 ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
