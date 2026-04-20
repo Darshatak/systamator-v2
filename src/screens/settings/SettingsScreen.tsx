@@ -2,6 +2,8 @@ import { Routes, Route, NavLink, Navigate } from 'react-router-dom'
 import { User, KeyRound, Server, Users, SlidersHorizontal, Plug } from 'lucide-react'
 import { ProvidersTab } from './ProvidersTab'
 import { McpTab } from './McpTab'
+import { AdvancedTab } from './AdvancedTab'
+import { AgentsTab } from './AgentsTab'
 import clsx from 'clsx'
 import { TopBar } from '@/components/ui'
 
@@ -39,8 +41,8 @@ export default function SettingsScreen() {
             <Route path="providers" element={<ProvidersTab />} />
             <Route path="mcp"       element={<McpTab />} />
             <Route path="fleet"     element={<Stub title="Fleet — see /fleet" />} />
-            <Route path="agents"    element={<Stub title="Agents — see /agents" />} />
-            <Route path="advanced"  element={<Stub title="Advanced" />} />
+            <Route path="agents"    element={<AgentsTab />} />
+            <Route path="advanced"  element={<AdvancedTab />} />
             <Route path=""          element={<Navigate to="account" replace />} />
           </Routes>
         </main>

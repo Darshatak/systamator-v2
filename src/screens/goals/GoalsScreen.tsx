@@ -1,10 +1,19 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
-import { Target, Plus, Send, Loader2, ChevronRight } from 'lucide-react'
+import { Target, Plus, Send, Loader2, ChevronRight, LayoutList, Columns3 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { runList, runStart } from '@/lib/api'
 import { Card, Chip, Empty, TopBar, Button, StatusDot } from '@/components/ui'
 import type { Run } from '@/types/domain'
+import clsx from 'clsx'
+
+const LANES: { id: Run['status']; label: string; tone: 'default'|'primary'|'warn'|'success'|'danger' }[] = [
+  { id: 'running',        label: 'Running',        tone: 'primary' },
+  { id: 'awaiting_user',  label: 'Awaiting you',   tone: 'warn' },
+  { id: 'done',           label: 'Done',           tone: 'success' },
+  { id: 'failed',         label: 'Failed',         tone: 'danger' },
+  { id: 'aborted',        label: 'Aborted',        tone: 'default' },
+]
 
 export default function GoalsScreen() {
   const navigate = useNavigate()
@@ -12,6 +21,7 @@ export default function GoalsScreen() {
   const [draft, setDraft] = useState<string>(params.get('prefill') ?? '')
   const [submitting, setSubmitting] = useState(false)
   const isNew = params.get('new') === '1' || !!params.get('prefill')
+  const [view, setView] = useState<'list' | 'kanban'>(() => (localStorage.getItem('goals.view') as 'list' | 'kanban') ?? 'list')
 
   const { data: runs, isLoading } = useQuery({
     queryKey: ['runs'],
@@ -45,7 +55,21 @@ export default function GoalsScreen() {
       <TopBar
         title="Goals"
         subtitle="Hand the team work. Each goal becomes a run with a plan + step graph."
-        actions={<Button icon={<Plus size={12} />} variant="primary" size="sm" onClick={() => setShowComposer(v => !v)}>New goal</Button>}
+        actions={<>
+          <div className="flex items-center rounded-md border border-white/10 overflow-hidden">
+            <button onClick={() => { setView('list'); localStorage.setItem('goals.view', 'list') }}
+                    className={clsx('px-2 py-1 text-[11px] flex items-center gap-1',
+                      view === 'list' ? 'bg-[rgb(var(--c-primary)/0.14)] text-[rgb(var(--c-primary-2))]' : 'text-meta')}>
+              <LayoutList size={11} /> list
+            </button>
+            <button onClick={() => { setView('kanban'); localStorage.setItem('goals.view', 'kanban') }}
+                    className={clsx('px-2 py-1 text-[11px] flex items-center gap-1',
+                      view === 'kanban' ? 'bg-[rgb(var(--c-primary)/0.14)] text-[rgb(var(--c-primary-2))]' : 'text-meta')}>
+              <Columns3 size={11} /> kanban
+            </button>
+          </div>
+          <Button icon={<Plus size={12} />} variant="primary" size="sm" onClick={() => setShowComposer(v => !v)}>New goal</Button>
+        </>}
       />
 
       {showComposer && (
@@ -82,9 +106,36 @@ export default function GoalsScreen() {
             action={<Button icon={<Plus size={12} />} variant="soft" size="sm" onClick={() => setShowComposer(true)}>New goal</Button>}
           />
         )}
-        {runs && runs.length > 0 && (
+        {runs && runs.length > 0 && view === 'list' && (
           <div className="space-y-2">
             {runs.map(r => <RunRow key={r.id} run={r} />)}
+          </div>
+        )}
+
+        {runs && runs.length > 0 && view === 'kanban' && (
+          <div className="grid grid-cols-5 gap-3">
+            {LANES.map(lane => {
+              const runsInLane = runs.filter(r => r.status === lane.id)
+              return (
+                <div key={lane.id} className="min-w-0">
+                  <div className="flex items-center gap-2 mb-2 px-1">
+                    <Chip tone={lane.tone}>{lane.label}</Chip>
+                    <span className="text-[10px] text-meta tabular-nums">{runsInLane.length}</span>
+                  </div>
+                  <div className="space-y-2">
+                    {runsInLane.map(r => (
+                      <Link key={r.id} to={`/goals/${r.id}`} className="block">
+                        <Card padding="sm" className="lift">
+                          <div className="text-[11px] font-semibold text-heading line-clamp-3 leading-snug">{r.goal}</div>
+                          <div className="text-[9px] text-meta mt-1">{new Date(r.startedAt).toLocaleTimeString()} · {r.taskType ?? 'goal'}</div>
+                        </Card>
+                      </Link>
+                    ))}
+                    {runsInLane.length === 0 && <div className="text-[10px] text-meta px-1">—</div>}
+                  </div>
+                </div>
+              )
+            })}
           </div>
         )}
       </div>

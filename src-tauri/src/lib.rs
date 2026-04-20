@@ -31,6 +31,7 @@ mod agents;
 mod browser;
 mod cli_providers;
 mod code;
+mod importer;
 mod orchestrator;
 mod runs;
 mod skills;
@@ -138,6 +139,7 @@ pub fn run() {
             code::run_shell,
             code::git_status,
             code::git_diff,
+            importer::v1_import,
             skills::skill_list,
             skills::skill_record,
             skills::skill_search,
