@@ -3,8 +3,7 @@
 // separate OS window; this screen is the control panel.
 
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Globe, Send, Square, ArrowRight, RefreshCw, Loader2, Link2, Terminal } from 'lucide-react'
+import { Globe, Send, Square, ArrowRight, RefreshCw, Loader2, Link2, Terminal, MousePointerClick, Keyboard, Copy, ChevronLeft, ChevronRight } from 'lucide-react'
 import { invoke } from '@/lib/ipc'
 import { Card, Chip, TopBar, Button, Empty } from '@/components/ui'
 
@@ -22,7 +21,13 @@ export default function BrowserScreen() {
   const [busy, setBusy]       = useState(false)
   const [js, setJs]           = useState('document.title')
   const [jsOut, setJsOut]     = useState<string | null>(null)
-  const navigate = useNavigate()
+  // Click / type / extract panel state
+  const [clickSel, setClickSel]     = useState('button')
+  const [typeSel, setTypeSel]       = useState('input[type="text"]')
+  const [typeText, setTypeText]     = useState('')
+  const [extractSel, setExtractSel] = useState('h1')
+  const [extracted, setExtracted]   = useState<string | null>(null)
+  const [action, setAction]         = useState<string | null>(null)
 
   useEffect(() => { pollUrl() }, [])
   useEffect(() => {
@@ -57,6 +62,28 @@ export default function BrowserScreen() {
     finally { setBusy(false) }
   }
 
+  async function doClick() {
+    setBusy(true); setAction(null)
+    try { await invoke('browser_click', { selector: clickSel }); setAction(`clicked ${clickSel}`) }
+    catch (e) { setAction(`error: ${String((e as Error)?.message ?? e)}`) }
+    finally { setBusy(false) }
+  }
+  async function doType() {
+    setBusy(true); setAction(null)
+    try { await invoke('browser_type', { selector: typeSel, text: typeText }); setAction(`typed into ${typeSel}`) }
+    catch (e) { setAction(`error: ${String((e as Error)?.message ?? e)}`) }
+    finally { setBusy(false) }
+  }
+  async function doExtract() {
+    setBusy(true); setExtracted(null)
+    try { setExtracted(await invoke<string>('browser_extract', { selector: extractSel })) }
+    catch (e) { setExtracted(`Error: ${String((e as Error)?.message ?? e)}`) }
+    finally { setBusy(false) }
+  }
+  async function back()    { try { await invoke('browser_back',    {}); pollUrl() } catch {} }
+  async function forward() { try { await invoke('browser_forward', {}); pollUrl() } catch {} }
+  async function reload()  { try { await invoke('browser_reload',  {}); pollUrl() } catch {} }
+
   return (
     <div className="h-full flex flex-col">
       <TopBar
@@ -86,12 +113,66 @@ export default function BrowserScreen() {
             )}
           </div>
           {currentUrl && (
-            <div className="mt-2 flex items-center gap-2 text-[11px] text-meta">
-              <Link2 size={11} /> <span className="font-mono truncate">{currentUrl}</span>
-              <button onClick={pollUrl} className="ml-auto p-1 rounded hover:bg-white/5"><RefreshCw size={10} /></button>
-            </div>
+            <>
+              <div className="mt-2 flex items-center gap-2 text-[11px] text-meta">
+                <Link2 size={11} /> <span className="font-mono truncate">{currentUrl}</span>
+                <div className="ml-auto flex items-center gap-1">
+                  <button onClick={back}    title="Back"    className="p-1 rounded hover:bg-white/5"><ChevronLeft size={11} /></button>
+                  <button onClick={forward} title="Forward" className="p-1 rounded hover:bg-white/5"><ChevronRight size={11} /></button>
+                  <button onClick={reload}  title="Reload"  className="p-1 rounded hover:bg-white/5"><RefreshCw size={10} /></button>
+                </div>
+              </div>
+            </>
           )}
         </Card>
+
+        {/* Click / Type / Extract */}
+        {currentUrl && (
+          <div className="grid grid-cols-3 gap-3">
+            <Card padding="sm">
+              <div className="flex items-center gap-2 mb-2">
+                <MousePointerClick size={11} className="text-[rgb(var(--c-primary-2))]" />
+                <span className="text-[10px] font-bold text-heading uppercase tracking-[0.18em]">Click</span>
+                <Chip className="ml-auto">browser_click</Chip>
+              </div>
+              <input value={clickSel} onChange={e => setClickSel(e.target.value)} placeholder="button.primary"
+                     className="w-full bg-white/5 border border-white/10 rounded-md px-2 py-1.5 text-[11px] font-mono text-body outline-none focus:border-[rgb(var(--c-primary)/0.6)]" />
+              <Button size="sm" onClick={doClick} disabled={busy} className="mt-2 w-full">Click selector</Button>
+            </Card>
+
+            <Card padding="sm">
+              <div className="flex items-center gap-2 mb-2">
+                <Keyboard size={11} className="text-[rgb(var(--c-primary-2))]" />
+                <span className="text-[10px] font-bold text-heading uppercase tracking-[0.18em]">Type</span>
+                <Chip className="ml-auto">browser_type</Chip>
+              </div>
+              <input value={typeSel} onChange={e => setTypeSel(e.target.value)} placeholder="input[name='q']"
+                     className="w-full bg-white/5 border border-white/10 rounded-md px-2 py-1.5 text-[11px] font-mono text-body outline-none focus:border-[rgb(var(--c-primary)/0.6)] mb-1.5" />
+              <input value={typeText} onChange={e => setTypeText(e.target.value)} placeholder="text to type"
+                     className="w-full bg-white/5 border border-white/10 rounded-md px-2 py-1.5 text-[11px] text-body outline-none focus:border-[rgb(var(--c-primary)/0.6)]" />
+              <Button size="sm" onClick={doType} disabled={busy || !typeText} className="mt-2 w-full">Type</Button>
+            </Card>
+
+            <Card padding="sm">
+              <div className="flex items-center gap-2 mb-2">
+                <Copy size={11} className="text-[rgb(var(--c-primary-2))]" />
+                <span className="text-[10px] font-bold text-heading uppercase tracking-[0.18em]">Extract</span>
+                <Chip className="ml-auto">browser_extract</Chip>
+              </div>
+              <input value={extractSel} onChange={e => setExtractSel(e.target.value)} placeholder="article h1"
+                     className="w-full bg-white/5 border border-white/10 rounded-md px-2 py-1.5 text-[11px] font-mono text-body outline-none focus:border-[rgb(var(--c-primary)/0.6)]" />
+              <Button size="sm" onClick={doExtract} disabled={busy} className="mt-2 w-full">Read text</Button>
+            </Card>
+          </div>
+        )}
+
+        {action && <div className="text-[11px] text-meta">{action}</div>}
+        {extracted && (
+          <Card padding="sm">
+            <div className="text-[10px] font-bold text-meta uppercase tracking-[0.18em] mb-1">Extracted</div>
+            <pre className="text-[11px] text-body font-mono whitespace-pre-wrap">{extracted}</pre>
+          </Card>
+        )}
 
         {/* Quick links */}
         <Card padding="sm">

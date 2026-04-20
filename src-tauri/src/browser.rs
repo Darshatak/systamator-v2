@@ -99,6 +99,107 @@ pub async fn browser_eval(app: AppHandle, js: String) -> Result<String, String> 
     Ok("(eval dispatched — result retrieval arrives with event-channel wiring in the next pass)".into())
 }
 
+/// Click any element by CSS selector. Fire-and-forget: success means the
+/// eval dispatched, not that a real element was found (browser_extract
+/// can verify presence first if the agent needs a guarantee).
+#[tauri::command]
+pub async fn browser_click(app: AppHandle, selector: String) -> Result<(), String> {
+    let win = get_window(&app).ok_or("browser is not open")?;
+    let js = format!(r#"(() => {{
+        const el = document.querySelector({});
+        if (el) {{ el.scrollIntoView({{ block: 'center' }}); el.click(); }}
+    }})();"#, js_string(&selector));
+    win.eval(&js).map_err(|e| format!("eval: {e}"))
+}
+
+/// Type text into an input / textarea / contenteditable matched by selector.
+/// Fires both `input` and `change` so React / Vue / bare form handlers all
+/// see the value.
+#[tauri::command]
+pub async fn browser_type(app: AppHandle, selector: String, text: String) -> Result<(), String> {
+    let win = get_window(&app).ok_or("browser is not open")?;
+    let js = format!(r#"(() => {{
+        const el = document.querySelector({});
+        if (!el) return;
+        el.focus();
+        if ('value' in el) {{
+            const nativeSetter = Object.getOwnPropertyDescriptor(el.__proto__, 'value')?.set;
+            if (nativeSetter) nativeSetter.call(el, {});
+            else el.value = {};
+        }} else {{
+            el.textContent = {};
+        }}
+        el.dispatchEvent(new Event('input',  {{ bubbles: true }}));
+        el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+    }})();"#, js_string(&selector), js_string(&text), js_string(&text), js_string(&text));
+    win.eval(&js).map_err(|e| format!("eval: {e}"))
+}
+
+/// Read the text content of an element. Hack: since Tauri's eval is
+/// fire-and-forget, we stash the value in `document.title`, read it via
+/// `WebviewWindow::title`, then restore the original title. Good enough
+/// for M3.2 — bidirectional IPC (postMessage-to-Rust) is on the roadmap.
+#[tauri::command]
+pub async fn browser_extract(app: AppHandle, selector: String) -> Result<String, String> {
+    let win = get_window(&app).ok_or("browser is not open")?;
+    let stash = format!(r#"(() => {{
+        if (window.__st_prev_title === undefined) window.__st_prev_title = document.title;
+        const el = document.querySelector({});
+        document.title = el ? (el.innerText || el.textContent || '') : '__SYSTAMATOR_MISSING__';
+    }})();"#, js_string(&selector));
+    win.eval(&stash).map_err(|e| format!("eval: {e}"))?;
+    // Give the DOM a moment to paint the new title.
+    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+    let title = win.title().map_err(|e| format!("title: {e}"))?;
+    let _ = win.eval("(() => { if (window.__st_prev_title !== undefined) { document.title = window.__st_prev_title; delete window.__st_prev_title; } })();");
+    if title == "__SYSTAMATOR_MISSING__" {
+        Err(format!("selector not found: {selector}"))
+    } else {
+        // Trim — browsers collapse long titles, but we dropped the original
+        // so what we get back reflects the real element text up to browser's title limit (~1KB).
+        Ok(title.chars().take(8 * 1024).collect())
+    }
+}
+
+#[tauri::command]
+pub async fn browser_reload(app: AppHandle) -> Result<(), String> {
+    let win = get_window(&app).ok_or("browser is not open")?;
+    win.eval("location.reload()").map_err(|e| format!("reload: {e}"))
+}
+
+#[tauri::command]
+pub async fn browser_back(app: AppHandle) -> Result<(), String> {
+    let win = get_window(&app).ok_or("browser is not open")?;
+    win.eval("history.back()").map_err(|e| format!("back: {e}"))
+}
+
+#[tauri::command]
+pub async fn browser_forward(app: AppHandle) -> Result<(), String> {
+    let win = get_window(&app).ok_or("browser is not open")?;
+    win.eval("history.forward()").map_err(|e| format!("forward: {e}"))
+}
+
+/// Escape a string as a JS literal (wrapped in quotes). Small helper used
+/// by the eval-building helpers — keeps them readable without depending
+/// on serde_json for every argument.
+fn js_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"'  => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 /// Best-effort URL normaliser: prepend https:// if missing, otherwise
 /// leave alone. Empty or malformed strings become a DuckDuckGo search.
 fn normalize_url(u: &str) -> String {
