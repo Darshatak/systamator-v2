@@ -117,6 +117,74 @@ pub async fn skill_reindex(state: tauri::State<'_, DbState>) -> Result<usize, St
     Ok(done)
 }
 
+// ── Marketplace: export / import / remote fetch ──────────────────────
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillBundle { pub version: u32, pub generated: String, pub skills: Vec<ExportedSkill> }
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportedSkill {
+    pub title:        String,
+    pub description:  String,
+    pub trigger:      Option<String>,
+    pub precondition: Vec<String>,
+    pub recipe:       serde_json::Value,
+    pub origin:       String,
+}
+
+#[tauri::command]
+pub async fn skill_export(state: tauri::State<'_, DbState>) -> Result<String, String> {
+    let guard = state.pool.lock().await;
+    let pool  = guard.as_ref().ok_or("db not connected")?;
+    let rows = sqlx::query("SELECT title, description, trigger, precondition, recipe, origin FROM skills ORDER BY created_at")
+        .fetch_all(pool).await.map_err(|e| e.to_string())?;
+    let skills: Vec<ExportedSkill> = rows.iter().map(|r| ExportedSkill {
+        title:        r.get("title"),
+        description:  r.get("description"),
+        trigger:      r.try_get("trigger").ok(),
+        precondition: r.try_get("precondition").unwrap_or_default(),
+        recipe:       r.get("recipe"),
+        origin:       r.get("origin"),
+    }).collect();
+    let bundle = SkillBundle { version: 1, generated: chrono::Utc::now().to_rfc3339(), skills };
+    serde_json::to_string_pretty(&bundle).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn skill_import(state: tauri::State<'_, DbState>, bundle_json: String) -> Result<usize, String> {
+    let bundle: SkillBundle = serde_json::from_str(&bundle_json).map_err(|e| format!("bundle parse: {e}"))?;
+    if bundle.version != 1 { return Err(format!("unsupported bundle version: {}", bundle.version)); }
+    let guard = state.pool.lock().await;
+    let pool  = guard.as_ref().ok_or("db not connected")?;
+    let mut added = 0usize;
+    for s in bundle.skills {
+        let exists: Option<sqlx::postgres::PgRow> = sqlx::query("SELECT id FROM skills WHERE title = $1 LIMIT 1")
+            .bind(&s.title).fetch_optional(pool).await.map_err(|e| e.to_string())?;
+        if exists.is_some() { continue; }
+        let embed_text = format!("{}\n{}\n{}", s.title, s.description, s.trigger.clone().unwrap_or_default());
+        let embedding_json = embeddings::embed_text(&embed_text).ok().and_then(|v| serde_json::to_value(v).ok());
+        sqlx::query("INSERT INTO skills(id, agent_id, title, description, trigger, precondition, recipe, origin, embedding) VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8)")
+            .bind(Uuid::new_v4())
+            .bind(&s.title).bind(&s.description).bind(&s.trigger)
+            .bind(&s.precondition).bind(&s.recipe).bind(&s.origin)
+            .bind(&embedding_json)
+            .execute(pool).await.map_err(|e| format!("insert '{}': {e}", s.title))?;
+        added += 1;
+    }
+    Ok(added)
+}
+
+#[tauri::command]
+pub async fn skill_fetch_remote(state: tauri::State<'_, DbState>, url: String) -> Result<usize, String> {
+    let normalised = url.replace("github.com", "raw.githubusercontent.com").replace("/blob/", "/");
+    let res = reqwest::Client::new().get(&normalised).send().await.map_err(|e| format!("fetch: {e}"))?;
+    if !res.status().is_success() { return Err(format!("fetch {} returned {}", normalised, res.status())); }
+    let body = res.text().await.map_err(|e| format!("body: {e}"))?;
+    skill_import(state, body).await
+}
+
 fn skill_from_row(r: &sqlx::postgres::PgRow) -> Skill {
     Skill {
         id:            r.get::<Uuid, _>("id").to_string(),
