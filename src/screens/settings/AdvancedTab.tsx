@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Download, ArrowRightLeft, Check, Loader2, AlertTriangle } from 'lucide-react'
 import { invoke } from '@/lib/ipc'
 import { Card, Button, Chip } from '@/components/ui'
+import { DiagnosticsPanel } from './DiagnosticsPanel'
 
 interface ImportReport {
   v1Path: string; exists: boolean
@@ -72,14 +73,11 @@ export function AdvancedTab() {
         )}
       </Card>
 
-      <Card>
-        <div className="text-[12px] font-semibold text-heading mb-1">Export / backup</div>
-        <div className="text-[11px] text-meta">Stubbed — lands with M5 marketplace so exports can be signed + sharable.</div>
-      </Card>
+      <DiagnosticsPanel />
 
       <Card>
-        <div className="text-[12px] font-semibold text-heading mb-1">Cache + logs</div>
-        <div className="text-[11px] text-meta">Cache TTL and log-level controls land alongside the diagnostics screen in M5.</div>
+        <div className="text-[12px] font-semibold text-heading mb-1">Export / backup</div>
+        <div className="text-[11px] text-meta">Runs → signed ZIP export lands with the skill marketplace (M5.1).</div>
       </Card>
     </div>
   )
