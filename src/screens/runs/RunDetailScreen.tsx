@@ -6,8 +6,9 @@ import { useParams, Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { runGet, runTick, skillDistillRun } from '@/lib/api'
 import type { Step } from '@/types/domain'
-import { Card, Chip, TopBar, StatusDot } from '@/components/ui'
-import { ChevronLeft, Clock, Bot, Wrench, Brain, GitFork, CheckCircle2, Loader2, XCircle } from 'lucide-react'
+import { Card, Chip, TopBar, StatusDot, Button } from '@/components/ui'
+import { ChevronLeft, Clock, Bot, Wrench, Brain, GitFork, CheckCircle2, Loader2, XCircle, Layers, ExternalLink, Trash2 } from 'lucide-react'
+import { invoke } from '@/lib/ipc'
 import clsx from 'clsx'
 
 const TICK_MS = 750
@@ -76,6 +77,7 @@ export default function RunDetailScreen() {
       />
 
       <div className="flex-1 overflow-y-auto px-7 py-6">
+        <WorktreeStrip run={run} onChanged={() => qc.invalidateQueries({ queryKey: ['run', id] })} />
         <div className="grid grid-cols-3 gap-3 mb-6">
           <Card padding="sm"><div className="text-[9px] font-bold text-meta uppercase tracking-[0.18em]">Total steps</div><div className="text-[24px] font-bold text-heading mt-0.5 tabular-nums">{total}</div></Card>
           <Card padding="sm"><div className="text-[9px] font-bold text-meta uppercase tracking-[0.18em]">Completed</div><div className="text-[24px] font-bold text-heading mt-0.5 tabular-nums">{done}</div></Card>
@@ -132,6 +134,46 @@ function StepRow({ step, index }: { step: Step; index: number }) {
         )}
       </div>
     </li>
+  )
+}
+
+// Worktree strip — visible when the run was started with a repo attached.
+// Shows path + branch, quick-opens the path as Code workspace, or cleans up.
+function WorktreeStrip({ run, onChanged }: { run: { id: string; status: string; meta: Record<string, unknown> }; onChanged: () => void }) {
+  const wt = (run.meta as { worktree?: { path: string; branch: string; repo: string } }).worktree
+  if (!wt) return null
+  const [busy, setBusy] = useState(false)
+
+  async function openInCode() {
+    localStorage.setItem('systamator.code.workspace', wt!.path)
+    window.location.hash = '' // noop
+    window.location.href = '/code'
+  }
+  async function remove() {
+    if (!confirm('Remove this worktree and its branch?')) return
+    setBusy(true)
+    try { await invoke('worktree_remove', { runId: run.id, repoPath: wt!.repo }); onChanged() }
+    catch (e) { alert(`worktree_remove: ${String((e as Error)?.message ?? e)}`) }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <Card padding="sm" className="mb-4">
+      <div className="flex items-center gap-3">
+        <Layers size={13} className="text-[rgb(var(--c-primary-2))]" />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-bold text-heading uppercase tracking-[0.18em]">Worktree</span>
+            <Chip tone="primary">{wt.branch.replace('systamator/', '')}</Chip>
+          </div>
+          <div className="text-[11px] font-mono text-meta truncate mt-0.5">{wt.path}</div>
+        </div>
+        <Button size="sm" variant="soft" icon={<ExternalLink size={11} />} onClick={openInCode}>Open in Code</Button>
+        <Button size="sm" variant="danger" icon={<Trash2 size={11} />} onClick={remove} disabled={busy}>
+          {busy ? <Loader2 size={11} className="animate-spin" /> : 'Remove'}
+        </Button>
+      </div>
+    </Card>
   )
 }
 
