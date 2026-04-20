@@ -3,7 +3,7 @@
 // separate OS window; this screen is the control panel.
 
 import { useEffect, useState } from 'react'
-import { Globe, Send, Square, ArrowRight, RefreshCw, Loader2, Link2, Terminal, MousePointerClick, Keyboard, Copy, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Globe, Send, Square, ArrowRight, RefreshCw, Loader2, Link2, Terminal, MousePointerClick, Keyboard, Copy, ChevronLeft, ChevronRight, Camera, ScanLine } from 'lucide-react'
 import { invoke } from '@/lib/ipc'
 import { Card, Chip, TopBar, Button, Empty } from '@/components/ui'
 
@@ -28,6 +28,7 @@ export default function BrowserScreen() {
   const [extractSel, setExtractSel] = useState('h1')
   const [extracted, setExtracted]   = useState<string | null>(null)
   const [action, setAction]         = useState<string | null>(null)
+  const [shot, setShot]             = useState<string | null>(null)
 
   useEffect(() => { pollUrl() }, [])
   useEffect(() => {
@@ -78,6 +79,18 @@ export default function BrowserScreen() {
     setBusy(true); setExtracted(null)
     try { setExtracted(await invoke<string>('browser_extract', { selector: extractSel })) }
     catch (e) { setExtracted(`Error: ${String((e as Error)?.message ?? e)}`) }
+    finally { setBusy(false) }
+  }
+  async function snapshot() {
+    setBusy(true); setExtracted(null)
+    try { setExtracted(await invoke<string>('browser_snapshot_a11y', {})) }
+    catch (e) { setExtracted(`Error: ${String((e as Error)?.message ?? e)}`) }
+    finally { setBusy(false) }
+  }
+  async function screenshot() {
+    setBusy(true); setShot(null)
+    try { setShot(await invoke<string>('browser_screenshot', {})) }
+    catch (e) { setAction(`screenshot error: ${String((e as Error)?.message ?? e)}`) }
     finally { setBusy(false) }
   }
   async function back()    { try { await invoke('browser_back',    {}); pollUrl() } catch {} }
@@ -166,11 +179,25 @@ export default function BrowserScreen() {
           </div>
         )}
 
+        {currentUrl && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button size="sm" variant="soft" icon={<ScanLine size={11} />} onClick={snapshot} disabled={busy}>A11y snapshot</Button>
+            <Button size="sm" variant="soft" icon={<Camera size={11} />}   onClick={screenshot} disabled={busy}>Screenshot</Button>
+            <span className="text-[10px] text-meta">Snapshot → 120 interactive elements. Screenshot → browser window PNG (macOS).</span>
+          </div>
+        )}
+
         {action && <div className="text-[11px] text-meta">{action}</div>}
         {extracted && (
           <Card padding="sm">
-            <div className="text-[10px] font-bold text-meta uppercase tracking-[0.18em] mb-1">Extracted</div>
+            <div className="text-[10px] font-bold text-meta uppercase tracking-[0.18em] mb-1">Extracted / snapshot</div>
             <pre className="text-[11px] text-body font-mono whitespace-pre-wrap">{extracted}</pre>
+          </Card>
+        )}
+        {shot && (
+          <Card padding="sm">
+            <div className="text-[10px] font-bold text-meta uppercase tracking-[0.18em] mb-1">Screenshot</div>
+            <img src={shot} className="w-full rounded-md border border-white/10" />
           </Card>
         )}
 

@@ -134,6 +134,8 @@ pub fn run() {
             browser::browser_reload,
             browser::browser_back,
             browser::browser_forward,
+            browser::browser_snapshot_a11y,
+            browser::browser_screenshot,
             code::fs_list_dir,
             code::fs_read,
             code::fs_write_with_diff,

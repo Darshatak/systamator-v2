@@ -161,6 +161,76 @@ pub async fn browser_extract(app: AppHandle, selector: String) -> Result<String,
     }
 }
 
+/// Compact accessibility-like snapshot of interactive elements. Walks
+/// links / buttons / form controls / role-tagged nodes and returns a
+/// JSON array [role, name, selector, href?] capped at 2 KB so it fits
+/// the document.title round-trip we use for reads.
+#[tauri::command]
+pub async fn browser_snapshot_a11y(app: AppHandle) -> Result<String, String> {
+    let win = get_window(&app).ok_or("browser is not open")?;
+    let snapshot_js = r#"
+        (() => {
+          if (window.__st_prev_title === undefined) window.__st_prev_title = document.title;
+          const interactive = [...document.querySelectorAll('a, button, input, select, textarea, [role], [onclick]')].slice(0, 120);
+          const out = interactive.map(el => {
+            const role = el.getAttribute('role') || el.tagName.toLowerCase();
+            const nameCandidate = (el.getAttribute('aria-label') || el.innerText || el.getAttribute('placeholder') || el.getAttribute('title') || el.getAttribute('alt') || '').trim();
+            const name = nameCandidate.slice(0, 60);
+            const href = el.getAttribute('href') || undefined;
+            const sel  = el.id ? ('#' + el.id)
+                       : el.getAttribute('data-testid') ? '[data-testid="' + el.getAttribute('data-testid') + '"]'
+                       : (role + ':nth-of-type(' + ([...(el.parentElement?.children||[])].filter(c => c.tagName === el.tagName).indexOf(el) + 1) + ')');
+            return [role, name, sel, href].filter(Boolean);
+          });
+          document.title = '__ST_SNAP__' + JSON.stringify(out).slice(0, 1800);
+        })();
+    "#;
+    win.eval(snapshot_js).map_err(|e| format!("eval: {e}"))?;
+    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    let title = win.title().map_err(|e| format!("title: {e}"))?;
+    let _ = win.eval("(() => { if (window.__st_prev_title !== undefined) { document.title = window.__st_prev_title; delete window.__st_prev_title; } })();");
+    title.strip_prefix("__ST_SNAP__").map(|s| s.to_string())
+        .ok_or_else(|| "snapshot payload missing (title rewrite blocked?)".into())
+}
+
+/// PNG screenshot of the browser window via macOS `screencapture -l<id>`.
+/// Returns a `data:image/png;base64,…` string the UI can render inline.
+/// macOS only for now; Linux / Windows fallbacks are a TODO.
+#[tauri::command]
+pub fn browser_screenshot(app: AppHandle) -> Result<String, String> {
+    #[cfg(not(target_os = "macos"))]
+    { let _ = app; return Err("screenshot is macOS-only for now".into()); }
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        let _win = get_window(&app).ok_or("browser is not open")?;
+        let tmp = std::env::temp_dir().join(format!("systamator-v2-snap-{}.png", uuid::Uuid::new_v4()));
+        let id  = window_id_for_title("Systamator · Browser")?;
+        let st = Command::new("screencapture")
+            .arg("-x").arg("-l").arg(&id).arg(&tmp)
+            .status().map_err(|e| format!("screencapture spawn: {e}"))?;
+        if !st.success() { return Err(format!("screencapture exit {}", st.code().unwrap_or(-1))); }
+        let bytes = std::fs::read(&tmp).map_err(|e| format!("read png: {e}"))?;
+        std::fs::remove_file(&tmp).ok();
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        Ok(format!("data:image/png;base64,{b64}"))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn window_id_for_title(fragment: &str) -> Result<String, String> {
+    use std::process::Command;
+    let script = format!(
+        "tell application \"System Events\"\nset frontApp to first process whose name is \"Systamator v2\"\nset winIds to id of every window of frontApp whose name contains \"{}\"\nreturn item 1 of winIds\nend tell",
+        fragment
+    );
+    let out = Command::new("osascript").arg("-e").arg(&script).output()
+        .map_err(|e| format!("osascript: {e}"))?;
+    if !out.status.success() { return Err(format!("osascript exit {}", out.status.code().unwrap_or(-1))); }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
 #[tauri::command]
 pub async fn browser_reload(app: AppHandle) -> Result<(), String> {
     let win = get_window(&app).ok_or("browser is not open")?;
