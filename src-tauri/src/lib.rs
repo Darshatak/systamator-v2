@@ -28,6 +28,7 @@ mod pii_guard;
 mod web_scrape;
 mod web_search;
 mod agents;
+mod browser;
 mod cli_providers;
 mod orchestrator;
 mod runs;
@@ -119,6 +120,11 @@ pub fn run() {
             cli_providers::cli_detect,
             cli_providers::cli_login_open,
             cli_providers::cli_exec,
+            browser::browser_open,
+            browser::browser_navigate,
+            browser::browser_close,
+            browser::browser_get_url,
+            browser::browser_eval,
             skills::skill_list,
             skills::skill_record,
             skills::skill_search,

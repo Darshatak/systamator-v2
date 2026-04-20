@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { Routes, Route, NavLink, Navigate } from 'react-router-dom'
 import {
   Home, Target, Server, Users, Sparkles, Settings as Cog,
-  Inbox, Command, Activity, ChevronsLeft, ChevronsRight,
+  Inbox, Command, Activity, ChevronsLeft, ChevronsRight, Globe,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { Palette } from './components/palette/Palette'
@@ -15,11 +15,13 @@ const AgentsScreen    = lazy(() => import('./screens/agents/AgentsScreen'))
 const SkillsScreen    = lazy(() => import('./screens/skills/SkillsScreen'))
 const SettingsScreen  = lazy(() => import('./screens/settings/SettingsScreen'))
 const InboxScreen     = lazy(() => import('./screens/inbox/InboxScreen'))
+const BrowserScreen   = lazy(() => import('./screens/browser/BrowserScreen'))
 
 const NAV = [
   { to: '/',         icon: Home,     label: 'Home' },
   { to: '/goals',    icon: Target,   label: 'Goals' },
   { to: '/fleet',    icon: Server,   label: 'Fleet' },
+  { to: '/browser',  icon: Globe,    label: 'Browser' },
   { to: '/agents',   icon: Users,    label: 'Agents' },
   { to: '/skills',   icon: Sparkles, label: 'Skills' },
 ] as const
@@ -138,6 +140,7 @@ export default function App() {
             <Route path="/skills"    element={<SkillsScreen />} />
             <Route path="/settings/*"element={<SettingsScreen />} />
             <Route path="/inbox"     element={<InboxScreen />} />
+            <Route path="/browser"   element={<BrowserScreen />} />
             <Route path="*"          element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>
