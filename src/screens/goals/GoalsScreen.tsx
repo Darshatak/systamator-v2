@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
-import { Target, Plus, Send, Loader2, ChevronRight, LayoutList, Columns3 } from 'lucide-react'
+import { Target, Plus, Send, Loader2, ChevronRight, LayoutList, Columns3, GitBranch, FileDiff, X } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { runList, runStart } from '@/lib/api'
 import { invoke } from '@/lib/ipc'
@@ -8,6 +8,10 @@ import { toast } from '@/lib/toast'
 import { Card, Chip, Empty, TopBar, Button, StatusDot } from '@/components/ui'
 import type { Run } from '@/types/domain'
 import clsx from 'clsx'
+
+type Worktree = { path: string; branch: string; repo: string }
+const getWorktree = (r: Run): Worktree | undefined =>
+  (r.meta as { worktree?: Worktree } | undefined)?.worktree
 
 const LANES: { id: Run['status']; label: string; tone: 'default'|'primary'|'warn'|'success'|'danger' }[] = [
   { id: 'running',        label: 'Running',        tone: 'primary' },
@@ -24,6 +28,7 @@ export default function GoalsScreen() {
   const [submitting, setSubmitting] = useState(false)
   const isNew = params.get('new') === '1' || !!params.get('prefill')
   const [view, setView] = useState<'list' | 'kanban'>(() => (localStorage.getItem('goals.view') as 'list' | 'kanban') ?? 'list')
+  const [diffRun, setDiffRun] = useState<Run | null>(null)
   const [repoPath, setRepoPath] = useState<string>('')
   const [repos, setRepos] = useState<Array<{ name: string; path: string }>>([])
   useEffect(() => {
@@ -142,14 +147,27 @@ export default function GoalsScreen() {
                     <span className="text-[10px] text-meta tabular-nums">{runsInLane.length}</span>
                   </div>
                   <div className="space-y-2">
-                    {runsInLane.map(r => (
-                      <Link key={r.id} to={`/goals/${r.id}`} className="block">
-                        <Card padding="sm" className="lift">
-                          <div className="text-[11px] font-semibold text-heading line-clamp-3 leading-snug">{r.goal}</div>
-                          <div className="text-[9px] text-meta mt-1">{new Date(r.startedAt).toLocaleTimeString()} · {r.taskType ?? 'goal'}</div>
+                    {runsInLane.map(r => {
+                      const wt = getWorktree(r)
+                      return (
+                        <Card key={r.id} padding="sm" className="lift">
+                          <Link to={`/goals/${r.id}`} className="block">
+                            <div className="text-[11px] font-semibold text-heading line-clamp-3 leading-snug">{r.goal}</div>
+                            <div className="text-[9px] text-meta mt-1">{new Date(r.startedAt).toLocaleTimeString()} · {r.taskType ?? 'goal'}</div>
+                          </Link>
+                          {wt && (
+                            <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-white/6">
+                              <GitBranch size={9} className="text-[rgb(var(--c-primary-2))]" />
+                              <span className="text-[9px] font-mono text-[rgb(var(--c-primary-2))] truncate flex-1">{wt.branch.replace('systamator/', '')}</span>
+                              <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); setDiffRun(r) }}
+                                      className="text-[9px] px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/10 text-meta hover:text-heading flex items-center gap-1">
+                                <FileDiff size={8} /> diff
+                              </button>
+                            </div>
+                          )}
                         </Card>
-                      </Link>
-                    ))}
+                      )
+                    })}
                     {runsInLane.length === 0 && <div className="text-[10px] text-meta px-1">—</div>}
                   </div>
                 </div>
@@ -158,12 +176,62 @@ export default function GoalsScreen() {
           </div>
         )}
       </div>
+
+      {diffRun && <DiffModal run={diffRun} onClose={() => setDiffRun(null)} />}
+    </div>
+  )
+}
+
+function DiffModal({ run, onClose }: { run: Run; onClose: () => void }) {
+  const wt = getWorktree(run)
+  const [diff, setDiff] = useState<string | null>(null)
+  const [err, setErr]   = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!wt) return
+    invoke<string>('git_diff', { cwd: wt.path })
+      .then(setDiff)
+      .catch(e => setErr(String((e as Error)?.message ?? e)))
+  }, [wt?.path])
+
+  if (!wt) return null
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-[rgb(var(--c-surface))] border border-white/10 rounded-xl shadow-2xl w-[min(900px,90vw)] max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center gap-3 px-5 py-3 border-b border-white/8">
+          <FileDiff size={14} className="text-[rgb(var(--c-primary-2))]" />
+          <div className="flex-1 min-w-0">
+            <div className="text-[13px] font-semibold text-heading truncate">{run.goal}</div>
+            <div className="text-[10px] font-mono text-meta truncate">{wt.branch} · {wt.path}</div>
+          </div>
+          <button onClick={onClose} className="p-1 rounded hover:bg-white/5 text-meta hover:text-heading"><X size={14} /></button>
+        </div>
+        <div className="flex-1 overflow-auto p-4">
+          {err && <div className="text-[11px] text-[rgb(var(--c-danger))] font-mono">{err}</div>}
+          {!err && diff === null && <div className="text-[11px] text-meta flex items-center gap-2"><Loader2 size={11} className="animate-spin" /> loading diff…</div>}
+          {!err && diff !== null && diff.trim() === '' && <div className="text-[11px] text-meta">No changes in this worktree.</div>}
+          {!err && diff && diff.trim() !== '' && (
+            <pre className="text-[11px] font-mono leading-relaxed whitespace-pre">
+              {diff.split('\n').map((line, i) => (
+                <div key={i} className={
+                  line.startsWith('+') && !line.startsWith('+++') ? 'text-[rgb(var(--c-success))]' :
+                  line.startsWith('-') && !line.startsWith('---') ? 'text-[rgb(var(--c-danger))]' :
+                  line.startsWith('@@') ? 'text-[rgb(var(--c-primary-2))]' :
+                  line.startsWith('diff ') || line.startsWith('+++') || line.startsWith('---') ? 'text-heading font-semibold' :
+                  'text-meta'
+                }>{line || ' '}</div>
+              ))}
+            </pre>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
 
 function RunRow({ run }: { run: Run }) {
   const tone = run.status === 'done' ? 'success' : run.status === 'failed' ? 'danger' : run.status === 'running' ? 'primary' : 'default'
+  const wt = getWorktree(run)
   return (
     <Link to={`/goals/${run.id}`} className="block">
       <Card className="lift hover:bg-[rgb(var(--c-surface-2)/0.6)]">
@@ -175,6 +243,11 @@ function RunRow({ run }: { run: Run }) {
               {new Date(run.startedAt).toLocaleString()} · {run.taskType ?? 'goal'} · {run.id.slice(0, 8)}
             </div>
           </div>
+          {wt && (
+            <Chip tone="primary" icon={<GitBranch size={9} />}>
+              {wt.branch.replace('systamator/', '')}
+            </Chip>
+          )}
           <Chip tone={tone as any}>{run.status}</Chip>
           <ChevronRight size={14} className="text-meta" />
         </div>
