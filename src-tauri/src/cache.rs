@@ -36,6 +36,14 @@ pub fn cache_invalidate(prefix: String) {
 }
 
 #[tauri::command]
+pub fn cache_flush() -> usize {
+    let mut store = match STORE.lock() { Ok(s) => s, Err(_) => return 0 };
+    let n = store.len();
+    store.clear();
+    n
+}
+
+#[tauri::command]
 pub fn cache_stats() -> serde_json::Value {
     let store = match STORE.lock() { Ok(s) => s, Err(_) => return serde_json::json!({"error":"lock"}) };
     let now = Instant::now();

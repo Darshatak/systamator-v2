@@ -86,11 +86,13 @@ pub fn run() {
             ssh::ssh_exec,
             ssh::ssh_disconnect,
             ssh::ssh_pool_status,
+            ssh::ssh_pool_drop_all,
             // cache
             cache::cache_get,
             cache::cache_set,
             cache::cache_invalidate,
             cache::cache_stats,
+            cache::cache_flush,
             // mcp
             mcp::mcp_list_servers,
             mcp::mcp_save_server,
@@ -158,6 +160,7 @@ pub fn run() {
             resources::resource_save,
             resources::resource_delete,
             db::db_status,
+            db::db_reconnect,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Systamator v2");

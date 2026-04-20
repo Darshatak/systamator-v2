@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { Target, Plus, Send, Loader2, ChevronRight, LayoutList, Columns3 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { runList, runStart } from '@/lib/api'
+import { invoke } from '@/lib/ipc'
 import { Card, Chip, Empty, TopBar, Button, StatusDot } from '@/components/ui'
 import type { Run } from '@/types/domain'
 import clsx from 'clsx'
@@ -22,6 +23,13 @@ export default function GoalsScreen() {
   const [submitting, setSubmitting] = useState(false)
   const isNew = params.get('new') === '1' || !!params.get('prefill')
   const [view, setView] = useState<'list' | 'kanban'>(() => (localStorage.getItem('goals.view') as 'list' | 'kanban') ?? 'list')
+  const [repoPath, setRepoPath] = useState<string>('')
+  const [repos, setRepos] = useState<Array<{ name: string; path: string }>>([])
+  useEffect(() => {
+    invoke<Array<{ name: string; meta: { path?: string } }>>('resource_list', { kind: 'repo' })
+      .then(rs => setRepos(rs.map(r => ({ name: r.name, path: r.meta?.path ?? '' })).filter(r => r.path)))
+      .catch(() => {})
+  }, [])
 
   const { data: runs, isLoading } = useQuery({
     queryKey: ['runs'],
@@ -41,7 +49,7 @@ export default function GoalsScreen() {
     if (!g || submitting) return
     setSubmitting(true)
     try {
-      const { runId } = await runStart(g)
+      const { runId } = await runStart(g, repoPath.trim() || undefined)
       setDraft('')
       setParams({}, { replace: true })
       navigate(`/goals/${runId}`)
@@ -89,6 +97,16 @@ export default function GoalsScreen() {
                       icon={submitting ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}>
                 Run
               </Button>
+            </div>
+            <div className="flex items-center gap-2 mt-2 px-1 text-[11px]">
+              <span className="text-meta">Optional repo (auto-creates a worktree):</span>
+              <select value={repoPath} onChange={e => setRepoPath(e.target.value)}
+                      className="h-7 px-2 rounded-md border border-white/10 bg-white/5 text-[11px] font-mono text-heading outline-none focus:border-[rgb(var(--c-primary)/0.6)]">
+                <option value="">— none —</option>
+                {repos.map(r => <option key={r.name} value={r.path}>{r.name}</option>)}
+              </select>
+              <input value={repoPath} onChange={e => setRepoPath(e.target.value)} placeholder="or /path/to/repo"
+                     className="h-7 flex-1 px-2 rounded-md border border-white/10 bg-white/5 text-[11px] font-mono text-heading outline-none focus:border-[rgb(var(--c-primary)/0.6)]" />
             </div>
           </Card>
         </div>

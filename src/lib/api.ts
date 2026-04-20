@@ -13,8 +13,10 @@ export interface PlannedGoal {
   taskType: string; conductorId: string; steps: PlannedStep[]
 }
 
-export const runStart = (goal: string) =>
-  invoke<{ runId: string; plan: PlannedGoal }>('run_start', { input: { goal } })
+export const runStart = (goal: string, repoPath?: string) =>
+  invoke<{ runId: string; plan: PlannedGoal; worktreePath: string | null }>(
+    'run_start', { input: { goal, repoPath } },
+  )
 
 export const runTick = (runId: string) =>
   invoke<{ stepId: string | null; status: 'advanced' | 'idle' | 'done' | 'awaiting_user'; runDone: boolean }>('run_tick', { runId })

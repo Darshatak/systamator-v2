@@ -67,3 +67,23 @@ pub async fn db_status(state: tauri::State<'_, DbState>) -> Result<DbStatus, Str
         None    => Ok(DbStatus { connected: false, message: "Postgres not connected — check DATABASE_URL".into() }),
     }
 }
+
+/// Force a reconnect — used by the Diagnostics "reconnect" button when
+/// the Postgres container was just restarted. Closes the old pool, runs
+/// migrations afresh on the new one so any schema change that shipped
+/// while the app was idle is applied.
+#[tauri::command]
+pub async fn db_reconnect(state: tauri::State<'_, DbState>) -> Result<DbStatus, String> {
+    let mut guard = state.pool.lock().await;
+    *guard = None; // drop previous pool
+    drop(guard);
+    match try_connect().await {
+        Ok(pool) => {
+            run_migrations(&pool).await?;
+            let mut g = state.pool.lock().await;
+            *g = Some(pool);
+            Ok(DbStatus { connected: true, message: "Reconnected + migrations applied".into() })
+        }
+        Err(e) => Ok(DbStatus { connected: false, message: format!("reconnect failed: {e}") }),
+    }
+}

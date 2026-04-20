@@ -199,6 +199,24 @@ pub fn ssh_disconnect(state: tauri::State<'_, SshState>, session_id: String, for
 #[serde(rename_all = "camelCase")]
 pub struct SshPoolEntry { pub session_id: String, pub leases: u32, pub alive: bool, pub idle_secs: u64 }
 
+/// Force-close every SSH session. Used by diagnostics "drop all"
+/// button. Lease counters are ignored — we're yanking the connection
+/// regardless of who still holds a reference, so callers must be
+/// prepared to reconnect on the next exec.
+#[tauri::command]
+pub fn ssh_pool_drop_all(state: tauri::State<'_, SshState>) -> usize {
+    let ids: Vec<String> = state.connections.lock().unwrap().keys().cloned().collect();
+    let n = ids.len();
+    for id in ids {
+        if let Some(arc) = state.connections.lock().unwrap().remove(&id) {
+            if let Ok(c) = arc.lock() { c.session.disconnect(None, "dropped", None).ok(); }
+        }
+        if let Ok(mut g) = state.meta.lock() { g.remove(&id); }
+    }
+    state.fp_index.lock().unwrap().clear();
+    n
+}
+
 #[tauri::command]
 pub fn ssh_pool_status(state: tauri::State<'_, SshState>) -> Vec<SshPoolEntry> {
     let meta = state.meta.lock().unwrap();

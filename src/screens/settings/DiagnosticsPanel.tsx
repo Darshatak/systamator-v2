@@ -5,9 +5,9 @@
 // drop SSH sessions) land with the next diagnostics pass.
 
 import { useEffect, useState } from 'react'
-import { Database, Server, Plug, Activity, RefreshCw } from 'lucide-react'
+import { Database, Server, Plug, Activity, RefreshCw, Trash2, Zap, PowerOff } from 'lucide-react'
 import { invoke } from '@/lib/ipc'
-import { Card, Chip } from '@/components/ui'
+import { Card, Chip, Button } from '@/components/ui'
 
 interface CacheStats { total: number; active: number; expired: number }
 interface DbStatus   { connected: boolean; message: string }
@@ -34,6 +34,29 @@ export function DiagnosticsPanel() {
   }
   useEffect(() => { refresh(); const t = setInterval(refresh, 3000); return () => clearInterval(t) }, [])
 
+  const [pending, setPending] = useState<string | null>(null)
+  const [toast, setToast]     = useState<string | null>(null)
+
+  async function flushCache() {
+    setPending('cache'); setToast(null)
+    try { const n = await invoke<number>('cache_flush', {}); setToast(`Flushed ${n} cache entries`) }
+    catch (e) { setToast(`Cache flush failed: ${String((e as Error)?.message ?? e)}`) }
+    finally { setPending(null); refresh() }
+  }
+  async function reconnectDb() {
+    setPending('db'); setToast(null)
+    try { const s = await invoke<DbStatus>('db_reconnect', {}); setToast(s.message) }
+    catch (e) { setToast(`DB reconnect failed: ${String((e as Error)?.message ?? e)}`) }
+    finally { setPending(null); refresh() }
+  }
+  async function dropSsh() {
+    if (!confirm('Force-close every SSH session?')) return
+    setPending('ssh'); setToast(null)
+    try { const n = await invoke<number>('ssh_pool_drop_all', {}); setToast(`Dropped ${n} SSH sessions`) }
+    catch (e) { setToast(`SSH drop failed: ${String((e as Error)?.message ?? e)}`) }
+    finally { setPending(null); refresh() }
+  }
+
   const costSummary = runs?.reduce(
     (acc, r) => ({
       tokens: acc.tokens + (r.cost?.tokens ?? 0),
@@ -49,6 +72,13 @@ export function DiagnosticsPanel() {
         <Activity size={14} className="text-[rgb(var(--c-primary-2))]" />
         <span className="text-[12px] font-bold text-heading uppercase tracking-[0.18em]">Diagnostics</span>
         <span className="ml-auto text-[10px] text-meta flex items-center gap-1"><RefreshCw size={9} /> live · 3 s</span>
+      </div>
+
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
+        <Button size="sm" variant="soft" icon={<Zap size={11} />}      onClick={flushCache}  disabled={!!pending}>Flush cache</Button>
+        <Button size="sm" variant="soft" icon={<RefreshCw size={11} />} onClick={reconnectDb} disabled={!!pending}>Reconnect DB</Button>
+        <Button size="sm" variant="danger" icon={<PowerOff size={11} />} onClick={dropSsh}     disabled={!!pending}>Drop SSH sessions</Button>
+        {toast && <span className="text-[11px] text-meta">{toast}</span>}
       </div>
 
       <div className="grid grid-cols-4 gap-3">

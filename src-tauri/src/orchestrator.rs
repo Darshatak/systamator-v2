@@ -255,17 +255,25 @@ fn json_str<'a, I: IntoIterator<Item = (&'static str, &'a str)>>(pairs: I) -> se
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct StartRunInput { pub goal: String }
+pub struct StartRunInput {
+    pub goal: String,
+    /// Optional repo path. When present, run_start auto-spawns a fresh
+    /// git worktree at ~/.systamator/worktrees/<run-id> and records its
+    /// path under run.meta.worktree so downstream steps + the Coder
+    /// agent can cd into an isolated working copy.
+    pub repo_path: Option<String>,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct StartRunResult { pub run_id: String, pub plan: PlannedGoal }
+pub struct StartRunResult {
+    pub run_id: String,
+    pub plan: PlannedGoal,
+    pub worktree_path: Option<String>,
+}
 
 #[tauri::command]
 pub async fn run_start(state: tauri::State<'_, DbState>, input: StartRunInput) -> Result<StartRunResult, String> {
-    // Conductor: real LLM first (Anthropic API key from keychain → Claude
-    // CLI fallback), heuristic if both fail. A goal NEVER blocks on
-    // planner failure — we'd rather run a simple plan than no plan.
     let plan = match plan_via_llm(&input.goal).await {
         Ok(p)  => p,
         Err(e) => { eprintln!("[orchestrator] LLM plan failed → heuristic: {e}"); plan_for_goal(&input.goal) }
@@ -274,13 +282,28 @@ pub async fn run_start(state: tauri::State<'_, DbState>, input: StartRunInput) -
     let guard = state.pool.lock().await;
     let pool  = guard.as_ref().ok_or("db not connected — start Postgres + restart the app")?;
 
-    // Insert the run
     let run_id = Uuid::new_v4();
-    sqlx::query("INSERT INTO runs(id, goal, task_type, conductor_id) VALUES ($1, $2, $3, $4)")
+
+    // Auto-create a worktree when the user pinned a repo. Failure is
+    // non-fatal: we still run the goal, just without isolation.
+    let mut meta = serde_json::json!({});
+    let mut worktree_path: Option<String> = None;
+    if let Some(repo) = input.repo_path.as_ref().filter(|s| !s.is_empty()) {
+        match crate::worktree::worktree_create(repo.clone(), run_id.to_string(), Some(true)) {
+            Ok(info) => {
+                worktree_path = Some(info.path.clone());
+                meta["worktree"] = serde_json::json!({ "path": info.path, "branch": info.branch, "repo": info.repo });
+            }
+            Err(e) => eprintln!("[orchestrator] worktree_create skipped: {e}"),
+        }
+    }
+
+    sqlx::query("INSERT INTO runs(id, goal, task_type, conductor_id, meta) VALUES ($1, $2, $3, $4, $5)")
         .bind(run_id)
         .bind(&input.goal)
         .bind(&plan.task_type)
         .bind(&plan.conductor_id)
+        .bind(&meta)
         .execute(pool).await.map_err(|e| format!("insert run: {e}"))?;
 
     // Persist all steps as 'pending'
@@ -299,7 +322,7 @@ pub async fn run_start(state: tauri::State<'_, DbState>, input: StartRunInput) -
             .execute(pool).await.map_err(|e| format!("insert step #{i}: {e}"))?;
     }
 
-    Ok(StartRunResult { run_id: run_id.to_string(), plan })
+    Ok(StartRunResult { run_id: run_id.to_string(), plan, worktree_path })
 }
 
 // ── Tauri command: tick the next pending step ─────────────────────────
@@ -338,6 +361,9 @@ pub async fn run_tick(state: tauri::State<'_, DbState>, run_id: String) -> Resul
         if n == 0 {
             sqlx::query("UPDATE runs SET status='done', finished_at=now() WHERE id=$1 AND finished_at IS NULL")
                 .bind(run_uuid).execute(pool).await.map_err(|e| e.to_string())?;
+            // Best-effort worktree cleanup — removes the per-run git worktree
+            // + systamator/<id> branch so idle runs don't leak disk.
+            let _ = crate::worktree::worktree_remove(run_id.clone(), None);
             return Ok(TickResult { step_id: None, status: "done".into(), run_done: true });
         }
         return Ok(TickResult { step_id: None, status: "idle".into(), run_done: false });
@@ -407,6 +433,7 @@ pub async fn run_tick(state: tauri::State<'_, DbState>, run_id: String) -> Resul
     if n == 0 {
         sqlx::query("UPDATE runs SET status='done', finished_at=now() WHERE id=$1").bind(run_uuid)
             .execute(pool).await.map_err(|e| e.to_string())?;
+        let _ = crate::worktree::worktree_remove(run_id.clone(), None);
         run_done = true;
     }
 
