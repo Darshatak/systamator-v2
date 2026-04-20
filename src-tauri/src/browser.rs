@@ -16,9 +16,86 @@
 // enough to drive most pages.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tokio::sync::oneshot;
 
 const BROWSER_LABEL: &str = "browser";
+
+// ── Eval return bridge ──────────────────────────────────────────────
+//
+// Every browser_eval_sync call registers a request id → oneshot sender
+// in PENDING. The initialization_script we inject into the browser
+// window exposes `window.__st.report(id, value)` which POSTs to the
+// loopback HTTP listener below. The listener wakes the matching
+// oneshot, and browser_eval_sync returns the value.
+//
+// tiny_http is sync, so we run it on a dedicated std::thread. Port is
+// 127.0.0.1:0 (ephemeral) — stored in a OnceLock for the injected
+// script to read.
+
+type PendingTx = oneshot::Sender<String>;
+static PENDING: OnceLock<Arc<Mutex<HashMap<String, PendingTx>>>> = OnceLock::new();
+static BRIDGE_PORT: OnceLock<u16> = OnceLock::new();
+
+fn pending() -> &'static Arc<Mutex<HashMap<String, PendingTx>>> {
+    PENDING.get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
+}
+
+/// Start the loopback HTTP listener on 127.0.0.1:0 and remember the
+/// bound port. Called once from lib.rs::run() setup so the bridge is
+/// ready before any browser window opens.
+pub fn start_eval_bridge() -> u16 {
+    if let Some(p) = BRIDGE_PORT.get() { return *p; }
+    let server = tiny_http::Server::http("127.0.0.1:0")
+        .expect("bind eval bridge");
+    let port = server.server_addr().to_ip().map(|a| a.port()).unwrap_or(0);
+    let _ = BRIDGE_PORT.set(port);
+
+    std::thread::spawn(move || {
+        for mut request in server.incoming_requests() {
+            if request.url() != "/__st_report" {
+                let _ = request.respond(tiny_http::Response::empty(404));
+                continue;
+            }
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
+                let id  = v["id"].as_str().unwrap_or("").to_string();
+                let val = v["value"].to_string();
+                if !id.is_empty() {
+                    if let Ok(mut g) = pending().lock() {
+                        if let Some(tx) = g.remove(&id) { let _ = tx.send(val); }
+                    }
+                }
+            }
+            // CORS not needed — loopback fetch from the same origin (no cross).
+            let _ = request.respond(tiny_http::Response::from_string("ok"));
+        }
+    });
+    port
+}
+
+fn bootstrap_js() -> String {
+    let port = BRIDGE_PORT.get().copied().unwrap_or(0);
+    // Inject BEFORE page scripts run. The page can then call
+    // window.__st.report(id, data) from any context.
+    format!(r#"
+        window.__st = {{
+            port: {port},
+            report: function(id, value) {{
+                try {{
+                    fetch('http://127.0.0.1:{port}/__st_report', {{
+                        method: 'POST',
+                        headers: {{ 'content-type': 'application/json' }},
+                        body: JSON.stringify({{ id: id, value: value }}),
+                    }}).catch(() => {{}});
+                }} catch (e) {{}}
+            }}
+        }};
+    "#)
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,6 +127,7 @@ pub async fn browser_open(app: AppHandle, url: String) -> Result<BrowserInfo, St
         .inner_size(1280.0, 900.0)
         .center()
         .resizable(true)
+        .initialization_script(&bootstrap_js())
         .build()
         .map_err(|e| format!("open: {e}"))?;
 
@@ -74,29 +152,30 @@ pub fn browser_get_url(app: AppHandle) -> Result<Option<String>, String> {
     Ok(get_window(&app).and_then(|w| w.url().ok().map(|u| u.to_string())))
 }
 
-/// Evaluate JS in the browser window. Returns stringified result via a
-/// convention: the JS expression should assign its result to
-/// `window.__systamator_result` and we read it back in a follow-up eval.
+/// Evaluate JS in the browser window and return the JSON-stringified
+/// result via the loopback bridge. Times out at 5s.
 #[tauri::command]
 pub async fn browser_eval(app: AppHandle, js: String) -> Result<String, String> {
     let win = get_window(&app).ok_or("browser window is not open")?;
-    // Wrap user JS so exceptions become a readable error.
-    let wrapped = format!(
-        r#"(() => {{
-          try {{
-            const r = (function(){{ {} }})();
-            window.__systamator_result = JSON.stringify(r);
-          }} catch (e) {{
-            window.__systamator_result = JSON.stringify({{ __error: String(e) }});
-          }}
-        }})();"#,
-        js
-    );
+    let id  = uuid::Uuid::new_v4().to_string();
+    let (tx, rx) = oneshot::channel::<String>();
+    pending().lock().unwrap().insert(id.clone(), tx);
+
+    let wrapped = format!(r#"(() => {{
+        try {{
+            const r = (function(){{ {js} }})();
+            window.__st.report({id_js}, r === undefined ? null : r);
+        }} catch (e) {{
+            window.__st.report({id_js}, {{ __error: String(e) }});
+        }}
+    }})();"#, js = js, id_js = js_string(&id));
     win.eval(&wrapped).map_err(|e| format!("eval: {e}"))?;
-    // eval is fire-and-forget on Tauri 2; we give the page a tick, then
-    // read the result via another eval that posts it to a channel. Out
-    // of scope for M3 foundation — caller just trusts the side effect.
-    Ok("(eval dispatched — result retrieval arrives with event-channel wiring in the next pass)".into())
+
+    match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
+        Ok(Ok(v))  => Ok(v),
+        Ok(Err(_)) => Err("eval bridge closed unexpectedly".into()),
+        Err(_)     => { pending().lock().unwrap().remove(&id); Err("eval timeout (5s)".into()) }
+    }
 }
 
 /// Click any element by CSS selector. Fire-and-forget: success means the
@@ -135,62 +214,39 @@ pub async fn browser_type(app: AppHandle, selector: String, text: String) -> Res
     win.eval(&js).map_err(|e| format!("eval: {e}"))
 }
 
-/// Read the text content of an element. Hack: since Tauri's eval is
-/// fire-and-forget, we stash the value in `document.title`, read it via
-/// `WebviewWindow::title`, then restore the original title. Good enough
-/// for M3.2 — bidirectional IPC (postMessage-to-Rust) is on the roadmap.
+/// Read the text content of an element. Returns full innerText via the
+/// eval bridge — no title-clipping anymore.
 #[tauri::command]
 pub async fn browser_extract(app: AppHandle, selector: String) -> Result<String, String> {
-    let win = get_window(&app).ok_or("browser is not open")?;
-    let stash = format!(r#"(() => {{
-        if (window.__st_prev_title === undefined) window.__st_prev_title = document.title;
+    let js = format!(r#"
         const el = document.querySelector({});
-        document.title = el ? (el.innerText || el.textContent || '') : '__SYSTAMATOR_MISSING__';
-    }})();"#, js_string(&selector));
-    win.eval(&stash).map_err(|e| format!("eval: {e}"))?;
-    // Give the DOM a moment to paint the new title.
-    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
-    let title = win.title().map_err(|e| format!("title: {e}"))?;
-    let _ = win.eval("(() => { if (window.__st_prev_title !== undefined) { document.title = window.__st_prev_title; delete window.__st_prev_title; } })();");
-    if title == "__SYSTAMATOR_MISSING__" {
-        Err(format!("selector not found: {selector}"))
-    } else {
-        // Trim — browsers collapse long titles, but we dropped the original
-        // so what we get back reflects the real element text up to browser's title limit (~1KB).
-        Ok(title.chars().take(8 * 1024).collect())
-    }
+        if (!el) return {{ __error: 'selector not found' }};
+        return el.innerText || el.textContent || '';
+    "#, js_string(&selector));
+    let out = browser_eval(app, js).await?;
+    if out.contains("__error") { return Err(format!("selector not found: {selector}")); }
+    // eval returns JSON-stringified value; strip the quotes around the string.
+    Ok(out.trim_matches('"').replace("\\n", "\n").replace("\\\"", "\""))
 }
 
-/// Compact accessibility-like snapshot of interactive elements. Walks
-/// links / buttons / form controls / role-tagged nodes and returns a
-/// JSON array [role, name, selector, href?] capped at 2 KB so it fits
-/// the document.title round-trip we use for reads.
+/// Accessibility snapshot of interactive elements — full, not title-clipped.
+/// Uses the loopback bridge so we can return far more than 2 KB.
 #[tauri::command]
 pub async fn browser_snapshot_a11y(app: AppHandle) -> Result<String, String> {
-    let win = get_window(&app).ok_or("browser is not open")?;
-    let snapshot_js = r#"
-        (() => {
-          if (window.__st_prev_title === undefined) window.__st_prev_title = document.title;
-          const interactive = [...document.querySelectorAll('a, button, input, select, textarea, [role], [onclick]')].slice(0, 120);
-          const out = interactive.map(el => {
+    let js = r#"
+        const interactive = [...document.querySelectorAll('a, button, input, select, textarea, [role], [onclick]')].slice(0, 500);
+        return interactive.map(el => {
             const role = el.getAttribute('role') || el.tagName.toLowerCase();
             const nameCandidate = (el.getAttribute('aria-label') || el.innerText || el.getAttribute('placeholder') || el.getAttribute('title') || el.getAttribute('alt') || '').trim();
-            const name = nameCandidate.slice(0, 60);
+            const name = nameCandidate.slice(0, 80);
             const href = el.getAttribute('href') || undefined;
             const sel  = el.id ? ('#' + el.id)
                        : el.getAttribute('data-testid') ? '[data-testid="' + el.getAttribute('data-testid') + '"]'
                        : (role + ':nth-of-type(' + ([...(el.parentElement?.children||[])].filter(c => c.tagName === el.tagName).indexOf(el) + 1) + ')');
             return [role, name, sel, href].filter(Boolean);
-          });
-          document.title = '__ST_SNAP__' + JSON.stringify(out).slice(0, 1800);
-        })();
+        });
     "#;
-    win.eval(snapshot_js).map_err(|e| format!("eval: {e}"))?;
-    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
-    let title = win.title().map_err(|e| format!("title: {e}"))?;
-    let _ = win.eval("(() => { if (window.__st_prev_title !== undefined) { document.title = window.__st_prev_title; delete window.__st_prev_title; } })();");
-    title.strip_prefix("__ST_SNAP__").map(|s| s.to_string())
-        .ok_or_else(|| "snapshot payload missing (title rewrite blocked?)".into())
+    browser_eval(app, js.to_string()).await
 }
 
 /// PNG screenshot of the browser window via macOS `screencapture -l<id>`.

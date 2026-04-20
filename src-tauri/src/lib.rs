@@ -71,6 +71,10 @@ pub fn run() {
 
             // Keep ssh sessions warm — same heartbeat as v1.
             ssh::spawn_heartbeat(app.handle().clone(), 30);
+            // Start the loopback bridge that lets the secondary browser
+            // window post eval results back to Rust. Port is ephemeral.
+            let port = browser::start_eval_bridge();
+            println!("[v2] browser eval bridge on 127.0.0.1:{port}");
 
             Ok(())
         })

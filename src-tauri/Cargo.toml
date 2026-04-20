@@ -52,3 +52,10 @@ url = "2"
 # under src-tauri/.fastembed_cache/ (gitignored).
 ort       = { version = "=2.0.0-rc.10", features = ["download-binaries"] }
 fastembed = { version = "5", default-features = false, features = ["hf-hub-rustls-tls"] }
+
+# M3.2 — browser eval return channel.
+# The browsed page has no access to Tauri's IPC, so we run a tiny
+# loopback HTTP listener on 127.0.0.1 and inject a bootstrap script
+# that POSTs results back. Nothing is exposed externally — bind
+# address is strictly loopback.
+tiny_http = "0.12"
