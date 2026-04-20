@@ -30,6 +30,7 @@ mod web_search;
 mod agents;
 mod browser;
 mod cli_providers;
+mod code;
 mod orchestrator;
 mod runs;
 mod skills;
@@ -131,6 +132,12 @@ pub fn run() {
             browser::browser_reload,
             browser::browser_back,
             browser::browser_forward,
+            code::fs_list_dir,
+            code::fs_read,
+            code::fs_write_with_diff,
+            code::run_shell,
+            code::git_status,
+            code::git_diff,
             skills::skill_list,
             skills::skill_record,
             skills::skill_search,
