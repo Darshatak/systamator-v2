@@ -345,7 +345,8 @@ pub struct TickResult {
 }
 
 #[tauri::command]
-pub async fn run_tick(state: tauri::State<'_, DbState>, run_id: String) -> Result<TickResult, String> {
+pub async fn run_tick(app: tauri::AppHandle, state: tauri::State<'_, DbState>, run_id: String) -> Result<TickResult, String> {
+    use tauri::Emitter;
     let guard = state.pool.lock().await;
     let pool  = guard.as_ref().ok_or("db not connected")?;
     let run_uuid = Uuid::parse_str(&run_id).map_err(|e| e.to_string())?;
@@ -364,6 +365,7 @@ pub async fn run_tick(state: tauri::State<'_, DbState>, run_id: String) -> Resul
             // Best-effort worktree cleanup — removes the per-run git worktree
             // + systamator/<id> branch so idle runs don't leak disk.
             let _ = crate::worktree::worktree_remove(run_id.clone(), None);
+            let _ = app.emit("run:done", serde_json::json!({ "runId": run_id.clone() }));
             return Ok(TickResult { step_id: None, status: "done".into(), run_done: true });
         }
         return Ok(TickResult { step_id: None, status: "idle".into(), run_done: false });
@@ -409,6 +411,7 @@ pub async fn run_tick(state: tauri::State<'_, DbState>, run_id: String) -> Resul
     // 2. running
     sqlx::query("UPDATE steps SET status='running', started_at=now() WHERE id=$1").bind(step_id)
         .execute(pool).await.map_err(|e| e.to_string())?;
+    let _ = app.emit("step:updated", serde_json::json!({ "runId": run_id.clone(), "stepId": step_id.to_string(), "status": "running" }));
 
     // 3. Simulate execution. Real tool-calling plugs in here per step.kind.
     tokio::time::sleep(std::time::Duration::from_millis(450)).await;
@@ -420,6 +423,7 @@ pub async fn run_tick(state: tauri::State<'_, DbState>, run_id: String) -> Resul
     sqlx::query("UPDATE steps SET status='done', output=$2, critique=$3, cost=$4, finished_at=now() WHERE id=$1")
         .bind(step_id).bind(&output).bind(&critique).bind(&cost)
         .execute(pool).await.map_err(|e| e.to_string())?;
+    let _ = app.emit("step:updated", serde_json::json!({ "runId": run_id.clone(), "stepId": step_id.to_string(), "status": "done" }));
 
     // 5. agent stats EWMA
     let _ = sqlx::query("UPDATE agents SET stats = jsonb_set(stats, '{runs}', to_jsonb((COALESCE(stats->>'runs','0')::int)+1)) WHERE id=$1")
@@ -434,6 +438,7 @@ pub async fn run_tick(state: tauri::State<'_, DbState>, run_id: String) -> Resul
         sqlx::query("UPDATE runs SET status='done', finished_at=now() WHERE id=$1").bind(run_uuid)
             .execute(pool).await.map_err(|e| e.to_string())?;
         let _ = crate::worktree::worktree_remove(run_id.clone(), None);
+        let _ = app.emit("run:done", serde_json::json!({ "runId": run_id.clone() }));
         run_done = true;
     }
 

@@ -9,7 +9,7 @@ import type { Step } from '@/types/domain'
 import { Card, Chip, TopBar, StatusDot, Button } from '@/components/ui'
 import { ChevronLeft, Clock, Bot, Wrench, Brain, GitFork, CheckCircle2, Loader2, XCircle, Layers, ExternalLink, Trash2 } from 'lucide-react'
 import { toast } from '@/lib/toast'
-import { invoke } from '@/lib/ipc'
+import { invoke, listen } from '@/lib/ipc'
 import clsx from 'clsx'
 
 const TICK_MS = 750
@@ -50,6 +50,17 @@ export default function RunDetailScreen() {
     void loop()
     return () => { cancelled = true; if (tickRef.current) window.clearTimeout(tickRef.current) }
   }, [id, autorun, qc])
+
+  // Push-based refresh: the orchestrator emits step:updated + run:done
+  // on every DB mutation. Listening here gives near-zero-latency UI
+  // updates even when the tick loop is paused.
+  useEffect(() => {
+    if (!id) return
+    let unsubStep = () => {}; let unsubDone = () => {}
+    listen<{ runId: string }>('step:updated', p => { if (p.runId === id) qc.invalidateQueries({ queryKey: ['run', id] }) }).then(u => unsubStep = u)
+    listen<{ runId: string }>('run:done',     p => { if (p.runId === id) { qc.invalidateQueries({ queryKey: ['run', id] }); setAutorun(false) } }).then(u => unsubDone = u)
+    return () => { unsubStep(); unsubDone() }
+  }, [id, qc])
 
   if (isLoading || !data) {
     return (

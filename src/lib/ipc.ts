@@ -30,3 +30,15 @@ export async function invoke<T = unknown>(cmd: string, args?: Record<string, unk
 export async function safeInvoke<T>(cmd: string, args: Record<string, unknown>, fallback: T): Promise<T> {
   try { return await invoke<T>(cmd, args) } catch { return fallback }
 }
+
+/**
+ * Subscribe to Tauri emit events. Returns an unsubscribe function. No-op
+ * (returns a cleanup that does nothing) when not in Tauri, so tests /
+ * web builds compile cleanly without guards at every call-site.
+ */
+export async function listen<T = unknown>(event: string, cb: (payload: T) => void): Promise<() => void> {
+  if (!isDesktop()) return () => {}
+  const mod = await import('@tauri-apps/api/event')
+  const unsub = await mod.listen<T>(event, e => cb(e.payload as T))
+  return unsub
+}
