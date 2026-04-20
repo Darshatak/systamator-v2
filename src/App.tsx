@@ -3,7 +3,7 @@ import { Routes, Route, NavLink, Navigate } from 'react-router-dom'
 import {
   Home, MessageSquare, Server, Boxes, Container, CalendarClock, Workflow,
   Sparkles, Settings as Cog, Inbox, Command, ChevronsLeft, ChevronsRight,
-  Database, RefreshCw, Loader2, Copy, Check,
+  Database, RefreshCw, Loader2, Copy, Check, Rocket, AlertCircle,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { Palette } from './components/palette/Palette'
@@ -198,22 +198,28 @@ export default function App() {
   )
 }
 
+interface DbStatusPayload { connected: boolean; message: string; url: string; source: string }
+interface DockerInfoPayload { installed: boolean; version: string | null; daemonOk: boolean }
+
 function PostgresGate({ onConnected }: { onConnected: () => void }) {
-  const [retrying, setRetrying] = useState(false)
-  const [copied, setCopied]     = useState<string | null>(null)
-  const [err, setErr]           = useState<string | null>(null)
-  const [status, setStatus]     = useState<{ connected: boolean; message: string; url: string; source: string } | null>(null)
-  const [urlDraft, setUrlDraft] = useState<string>('')
-  const [saving, setSaving]     = useState(false)
+  const [retrying, setRetrying]       = useState(false)
+  const [copied, setCopied]           = useState<string | null>(null)
+  const [err, setErr]                 = useState<string | null>(null)
+  const [status, setStatus]           = useState<DbStatusPayload | null>(null)
+  const [urlDraft, setUrlDraft]       = useState<string>('')
+  const [saving, setSaving]           = useState(false)
+  const [docker, setDocker]           = useState<DockerInfoPayload | null>(null)
+  const [dockerBusy, setDockerBusy]   = useState(false)
+  const [dockerPhase, setDockerPhase] = useState<string | null>(null)
 
   useEffect(() => {
-    invoke<{ connected: boolean; message: string; url: string; source: string }>('db_status', {})
+    invoke<DbStatusPayload>('db_status', {})
       .then(s => { setStatus(s); setUrlDraft(s.url) })
       .catch(() => {})
+    invoke<DockerInfoPayload>('infra_docker_check', {}).then(setDocker).catch(() => setDocker({ installed: false, version: null, daemonOk: false }))
   }, [])
 
-  // Install snippet assumes brew default cluster on 5432 — the v2
-  // default URL points at 5432 too, so this works zero-config.
+  // Manual brew fallback for people who'd rather not touch Docker.
   const INSTALL = [
     'brew install postgresql@16',
     'brew services start postgresql@16',
@@ -221,10 +227,21 @@ function PostgresGate({ onConnected }: { onConnected: () => void }) {
     'createdb -O systamator systamator_v2 2>/dev/null || true',
   ].join('\n')
 
+  async function startDocker() {
+    setDockerBusy(true); setErr(null); setDockerPhase('Starting container + waiting for pg_isready…')
+    try {
+      const s = await invoke<DbStatusPayload>('infra_postgres_up', {})
+      setStatus(s); setUrlDraft(s.url)
+      if (s.connected) { onConnected(); return }
+      setErr(s.message)
+    } catch (e) { setErr(String((e as Error)?.message ?? e)) }
+    finally { setDockerBusy(false); setDockerPhase(null) }
+  }
+
   async function retry() {
     setRetrying(true); setErr(null)
     try {
-      const s = await invoke<{ connected: boolean; message: string; url: string; source: string }>('db_reconnect', {})
+      const s = await invoke<DbStatusPayload>('db_reconnect', {})
       setStatus(s)
       if (s.connected) { onConnected(); return }
       setErr(s.message)
@@ -234,7 +251,7 @@ function PostgresGate({ onConnected }: { onConnected: () => void }) {
   async function saveUrl() {
     setSaving(true); setErr(null)
     try {
-      const s = await invoke<{ connected: boolean; message: string; url: string; source: string }>('db_set_url', { url: urlDraft })
+      const s = await invoke<DbStatusPayload>('db_set_url', { url: urlDraft })
       setStatus(s)
       if (s.connected) { onConnected(); return }
       setErr(s.message)
@@ -245,9 +262,11 @@ function PostgresGate({ onConnected }: { onConnected: () => void }) {
     navigator.clipboard.writeText(text).then(() => { setCopied(id); setTimeout(() => setCopied(null), 1500) })
   }
 
+  const dockerReady = docker?.installed && docker?.daemonOk
+
   return (
     <div className="h-full flex items-center justify-center p-8 overflow-auto">
-      <div className="max-w-[600px] w-full rounded-2xl border border-white/10 bg-[rgb(var(--c-surface))] shadow-2xl p-7">
+      <div className="max-w-[620px] w-full rounded-2xl border border-white/10 bg-[rgb(var(--c-surface))] shadow-2xl p-7">
         <div className="flex items-center gap-3 mb-4">
           <div className="w-10 h-10 rounded-xl bg-[rgb(var(--c-danger)/0.14)] text-[rgb(var(--c-danger))] flex items-center justify-center">
             <Database size={16} />
@@ -260,15 +279,47 @@ function PostgresGate({ onConnected }: { onConnected: () => void }) {
 
         {/* Live status */}
         {status && (
-          <div className="text-[11px] text-meta mb-3">
-            Tried <code className="bg-white/5 rounded px-1 font-mono text-body">{status.url}</code>
+          <div className="text-[11px] text-meta mb-4">
+            Last tried <code className="bg-white/5 rounded px-1 font-mono text-body">{status.url}</code>
             <span className="ml-2 opacity-60">(source: {status.source})</span>
           </div>
         )}
 
-        {/* Connection URL editor */}
+        {/* ── Primary path: Docker ──────────────────────────── */}
+        <div className="rounded-xl border border-[rgb(var(--c-primary)/0.35)] bg-[rgb(var(--c-primary)/0.06)] p-4 mb-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Rocket size={13} className="text-[rgb(var(--c-primary-2))]" />
+            <span className="text-[12px] font-bold text-heading">One-click — Docker</span>
+            <span className="ml-auto text-[10px] text-meta">
+              {docker === null ? 'detecting…' :
+               !docker.installed ? 'not installed' :
+               !docker.daemonOk   ? 'daemon offline' :
+               docker.version}
+            </span>
+          </div>
+          <div className="text-[11px] text-meta leading-relaxed mb-3">
+            Starts <code className="bg-white/5 rounded px-1 font-mono">postgres:16-alpine</code> as <code className="bg-white/5 rounded px-1 font-mono">systamator-postgres</code> on :5432, with a persistent volume at <code className="bg-white/5 rounded px-1 font-mono">app-data/pgdata</code>. We wait for pg_isready, save the URL, and unlock.
+          </div>
+          <button onClick={startDocker} disabled={!dockerReady || dockerBusy}
+                  className="w-full inline-flex items-center justify-center gap-2 px-4 h-10 rounded-xl gradient-primary text-white text-[13px] font-semibold disabled:opacity-50">
+            {dockerBusy ? <Loader2 size={13} className="animate-spin" /> : <Rocket size={13} />}
+            {dockerBusy ? (dockerPhase ?? 'Starting…') : 'Start Postgres with Docker'}
+          </button>
+          {!dockerReady && docker !== null && (
+            <div className="mt-3 flex items-start gap-2 text-[11px] text-meta">
+              <AlertCircle size={11} className="mt-0.5 flex-shrink-0 text-[rgb(var(--c-warn))]" />
+              <span>
+                {!docker.installed
+                  ? <>Install <a href="https://www.docker.com/products/docker-desktop/" target="_blank" rel="noreferrer" className="underline">Docker Desktop</a>, <a href="https://orbstack.dev" target="_blank" rel="noreferrer" className="underline">OrbStack</a>, or run <code className="bg-white/5 rounded px-1 font-mono">brew install colima docker && colima start</code>.</>
+                  : <>Docker is installed but the daemon isn't reachable. Start Docker Desktop / OrbStack / <code className="bg-white/5 rounded px-1 font-mono">colima start</code>.</>}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* ── Already have Postgres elsewhere? ──────────────── */}
         <div className="mb-4">
-          <div className="text-[10px] font-bold text-meta uppercase tracking-wider mb-1.5">Connection URL</div>
+          <div className="text-[10px] font-bold text-meta uppercase tracking-wider mb-1.5">Already running Postgres somewhere?</div>
           <div className="flex items-center gap-2">
             <input value={urlDraft} onChange={e => setUrlDraft(e.target.value)}
                    placeholder="postgres://user:pass@host:port/db"
@@ -281,25 +332,25 @@ function PostgresGate({ onConnected }: { onConnected: () => void }) {
           <div className="text-[10px] text-meta mt-1">Env <code className="bg-white/5 rounded px-1 font-mono">DATABASE_URL</code> wins if set — otherwise this value is stored in app settings.</div>
         </div>
 
-        {/* Install snippet */}
-        <div className="rounded-xl border border-white/10 bg-black/30 p-3 relative">
-          <div className="text-[10px] font-bold text-meta uppercase tracking-wider mb-2 flex items-center justify-between">
-            <span>macOS install — paste into Terminal</span>
-            <button onClick={() => copy(INSTALL, 'install')} className="p-1 rounded hover:bg-white/5">
-              {copied === 'install' ? <Check size={11} className="text-[rgb(var(--c-success))]" /> : <Copy size={11} />}
-            </button>
+        {/* ── Manual brew fallback (collapsed by default) ──── */}
+        <details className="mb-3">
+          <summary className="text-[11px] text-meta cursor-pointer hover:text-body select-none">Prefer a native install? brew snippet →</summary>
+          <div className="mt-2 rounded-xl border border-white/10 bg-black/30 p-3 relative">
+            <div className="text-[10px] font-bold text-meta uppercase tracking-wider mb-2 flex items-center justify-between">
+              <span>macOS — paste into Terminal</span>
+              <button onClick={() => copy(INSTALL, 'install')} className="p-1 rounded hover:bg-white/5">
+                {copied === 'install' ? <Check size={11} className="text-[rgb(var(--c-success))]" /> : <Copy size={11} />}
+              </button>
+            </div>
+            <pre className="text-[11px] font-mono text-body whitespace-pre-wrap leading-relaxed">{INSTALL}</pre>
           </div>
-          <pre className="text-[11px] font-mono text-body whitespace-pre-wrap leading-relaxed">{INSTALL}</pre>
-        </div>
-        <div className="text-[10px] text-meta mt-2">
-          brew's default cluster runs on port 5432 — the v2 default URL matches. If your Postgres lives elsewhere, paste its URL above instead.
-        </div>
+        </details>
 
-        <div className="mt-5 flex items-center gap-2">
+        <div className="flex items-center gap-2">
           <button onClick={retry} disabled={retrying}
-                  className="inline-flex items-center gap-2 px-4 h-9 rounded-xl gradient-primary text-white text-[12px] font-semibold disabled:opacity-50">
+                  className="inline-flex items-center gap-2 px-3 h-9 rounded-lg bg-white/5 border border-white/10 text-[12px] text-body hover:bg-white/10 disabled:opacity-50">
             {retrying ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-            Retry connection
+            Retry
           </button>
           {err && <span className="text-[11px] text-[rgb(var(--c-danger))] font-mono truncate">{err}</span>}
         </div>

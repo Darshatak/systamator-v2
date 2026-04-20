@@ -53,6 +53,12 @@ fn save_config(app: &AppHandle, cfg: &DbConfig) {
     let _ = std::fs::write(config_path(app), serde_json::to_string_pretty(cfg).unwrap_or_default());
 }
 
+/// Persist a URL override from outside this module (e.g. docker bring-up
+/// wants the next boot to already know where Postgres is).
+pub fn save_url_override(app: &AppHandle, url: &str) {
+    save_config(app, &DbConfig { url: Some(url.to_string()) });
+}
+
 /// Resolve URL with precedence: env DATABASE_URL → config file → default.
 pub fn effective_url(app: Option<&AppHandle>) -> (String, &'static str) {
     if let Ok(v) = std::env::var("DATABASE_URL") { return (v, "env"); }

@@ -40,6 +40,7 @@ mod worktree;
 mod skills;
 mod resources;
 mod db;
+mod docker;
 
 use db::DbState;
 use ssh::SshState;
@@ -179,6 +180,10 @@ pub fn run() {
             db::db_status,
             db::db_reconnect,
             db::db_set_url,
+            docker::infra_docker_check,
+            docker::infra_postgres_status,
+            docker::infra_postgres_up,
+            docker::infra_postgres_down,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Systamator v2");
