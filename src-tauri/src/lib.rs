@@ -31,6 +31,7 @@ mod agents;
 mod browser;
 mod cli_providers;
 mod code;
+mod embeddings;
 mod importer;
 mod orchestrator;
 mod runs;
@@ -143,6 +144,7 @@ pub fn run() {
             skills::skill_list,
             skills::skill_record,
             skills::skill_search,
+            skills::skill_reindex,
             resources::resource_list,
             resources::resource_save,
             resources::resource_delete,

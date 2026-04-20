@@ -43,6 +43,7 @@ pub async fn run_migrations(pool: &Pool<Postgres>) -> Result<(), String> {
     // at runtime. Idempotent CREATE TABLE IF NOT EXISTS keeps this safe.
     let scripts: &[&str] = &[
         include_str!("../migrations/001_init.sql"),
+        include_str!("../migrations/002_embeddings.sql"),
     ];
     for sql in scripts {
         sqlx::query(sql).execute(pool).await

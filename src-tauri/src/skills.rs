@@ -9,6 +9,7 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use crate::db::DbState;
+use crate::embeddings;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -64,7 +65,19 @@ pub async fn skill_record(state: tauri::State<'_, DbState>, input: RecordSkillIn
     let guard = state.pool.lock().await;
     let pool  = guard.as_ref().ok_or("db not connected")?;
     let id = Uuid::new_v4();
-    sqlx::query("INSERT INTO skills(id, agent_id, title, description, trigger, precondition, recipe, origin) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)")
+
+    // Embed the title + description + trigger so future goals can cosine-
+    // match against this skill. Best-effort: if fastembed isn't loaded
+    // yet (first-run model download, no network) we save with NULL and
+    // backfill later.
+    let embed_source = format!("{}\n{}\n{}",
+        input.title,
+        input.description,
+        input.trigger.clone().unwrap_or_default());
+    let embedding = embeddings::embed_text(&embed_source).ok();
+    let embedding_json = embedding.map(|v| serde_json::to_value(v).ok()).flatten();
+
+    sqlx::query("INSERT INTO skills(id, agent_id, title, description, trigger, precondition, recipe, origin, embedding) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)")
         .bind(id)
         .bind(&input.agent_id)
         .bind(&input.title)
@@ -73,8 +86,35 @@ pub async fn skill_record(state: tauri::State<'_, DbState>, input: RecordSkillIn
         .bind(&input.precondition)
         .bind(&input.recipe)
         .bind(input.origin.unwrap_or_else(|| "learned".to_string()))
+        .bind(&embedding_json)
         .execute(pool).await.map_err(|e| e.to_string())?;
     Ok(id.to_string())
+}
+
+/// Backfill embeddings for existing skills that have NULL — runs on
+/// demand when the orchestrator first loads, giving post-update users a
+/// populated skill library without a reindex step they have to trigger.
+#[tauri::command]
+pub async fn skill_reindex(state: tauri::State<'_, DbState>) -> Result<usize, String> {
+    let guard = state.pool.lock().await;
+    let pool  = guard.as_ref().ok_or("db not connected")?;
+    let rows = sqlx::query("SELECT id, title, description, trigger FROM skills WHERE embedding IS NULL LIMIT 200")
+        .fetch_all(pool).await.map_err(|e| e.to_string())?;
+    let mut done = 0;
+    for r in rows {
+        let id: Uuid = r.get("id");
+        let title: String = r.get("title");
+        let description: String = r.get("description");
+        let trigger: Option<String> = r.try_get("trigger").ok();
+        let text = format!("{title}\n{description}\n{}", trigger.unwrap_or_default());
+        if let Ok(vec) = embeddings::embed_text(&text) {
+            let j = serde_json::to_value(vec).ok();
+            let _ = sqlx::query("UPDATE skills SET embedding = $1 WHERE id = $2")
+                .bind(&j).bind(id).execute(pool).await;
+            done += 1;
+        }
+    }
+    Ok(done)
 }
 
 fn skill_from_row(r: &sqlx::postgres::PgRow) -> Skill {

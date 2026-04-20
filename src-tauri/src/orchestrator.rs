@@ -16,6 +16,7 @@ use uuid::Uuid;
 use crate::db::DbState;
 use crate::keychain;
 use crate::cli_providers;
+use crate::embeddings;
 
 // Verbs that should NEVER auto-execute. Steps whose label or input
 // matches any of these flip to 'awaiting_user' so the Inbox surfaces
@@ -171,10 +172,11 @@ fn keychain_get_provider(name: &str) -> Option<String> {
     keychain::keychain_get("providers".into(), name.into()).filter(|s| !s.starts_with("__") && !s.is_empty())
 }
 
-// Best-effort skill recall — opens its own DB pool via env so we don't
-// have to thread DbState through every helper. fastembed/OpenSpace
-// semantic search lands in a follow-up commit; for now use literal
-// keyword overlap on the goal text.
+// Semantic skill recall — embed the goal, cosine against every stored
+// skill embedding, keep the top-3 with similarity ≥ 0.55. Literal LIKE
+// remains as a last-resort fallback when embeddings failed to load
+// (first boot before the model downloads). Best-effort throughout — a
+// recall failure never blocks a run.
 async fn recall_skill_hint(goal: &str) -> Result<String, String> {
     let url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://systamator:systamator@127.0.0.1:5435/systamator_v2".into());
@@ -182,15 +184,39 @@ async fn recall_skill_hint(goal: &str) -> Result<String, String> {
         .max_connections(1)
         .acquire_timeout(std::time::Duration::from_secs(2))
         .connect(&url).await.map_err(|e| e.to_string())?;
+
+    // 1. Semantic path — needs fastembed.
+    if let Ok(goal_vec) = embeddings::embed_text(goal) {
+        let rows = sqlx::query("SELECT title, description, recipe, embedding FROM skills WHERE embedding IS NOT NULL LIMIT 500")
+            .fetch_all(&pool).await.map_err(|e| e.to_string())?;
+        let mut scored: Vec<(f32, String, String, serde_json::Value)> = rows.into_iter().filter_map(|r| {
+            let emb_json: serde_json::Value = r.try_get("embedding").ok()?;
+            let emb: Vec<f32> = serde_json::from_value(emb_json).ok()?;
+            let sim = embeddings::cosine(&goal_vec, &emb);
+            if sim < 0.55 { return None; }
+            Some((sim, r.get("title"), r.get("description"), r.get("recipe")))
+        }).collect();
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(3);
+        if !scored.is_empty() {
+            let mut out = String::new();
+            for (sim, title, description, recipe) in scored {
+                out.push_str(&format!("• [{:.2}] {title} — {description}\n  recipe: {recipe}\n", sim));
+            }
+            return Ok(out);
+        }
+    }
+
+    // 2. Literal fallback.
     let needle = format!("%{}%", goal.to_lowercase().chars().take(40).collect::<String>());
     let rows = sqlx::query("SELECT title, description, recipe FROM skills WHERE LOWER(trigger) LIKE $1 OR LOWER(title) LIKE $1 ORDER BY success_count DESC LIMIT 3")
         .bind(&needle).fetch_all(&pool).await.map_err(|e| e.to_string())?;
     if rows.is_empty() { return Ok(String::new()); }
     let mut out = String::new();
     for r in rows {
-        let title:       String              = r.get("title");
-        let description: String              = r.get("description");
-        let recipe:      serde_json::Value   = r.get("recipe");
+        let title:       String            = r.get("title");
+        let description: String            = r.get("description");
+        let recipe:      serde_json::Value = r.get("recipe");
         out.push_str(&format!("• {title} — {description}\n  recipe: {recipe}\n"));
     }
     Ok(out)
