@@ -2,11 +2,13 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { Routes, Route, NavLink, Navigate } from 'react-router-dom'
 import {
   Home, Target, Server, Users, Sparkles, Settings as Cog,
-  Inbox, Command, Activity, ChevronsLeft, ChevronsRight, Globe, Code2,
+  Inbox, Command, ChevronsLeft, ChevronsRight, Globe, Code2,
+  Database, RefreshCw, Loader2, Copy, Check,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { Palette } from './components/palette/Palette'
 import { Toaster } from './components/ui/Toaster'
+import { invoke, isDesktop } from './lib/ipc'
 
 const HomeScreen      = lazy(() => import('./screens/home/HomeScreen'))
 const GoalsScreen     = lazy(() => import('./screens/goals/GoalsScreen'))
@@ -32,6 +34,23 @@ const NAV = [
 export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [expanded, setExpanded] = useState<boolean>(() => localStorage.getItem('rail.expanded') !== 'false')
+  const [dbReady, setDbReady] = useState<boolean | null>(isDesktop() ? null : true)
+
+  useEffect(() => {
+    if (!isDesktop()) return
+    let cancelled = false
+    async function poll() {
+      while (!cancelled) {
+        const s = await invoke<{ connected: boolean }>('db_status', {}).catch(() => ({ connected: false }))
+        if (cancelled) return
+        if (s.connected) { setDbReady(true); return }
+        setDbReady(false)
+        await new Promise(r => setTimeout(r, 2000))
+      }
+    }
+    void poll()
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -41,6 +60,16 @@ export default function App() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  if (dbReady === null) {
+    return <div className="h-full flex items-center justify-center text-meta text-[12px] gap-2"><Loader2 size={14} className="animate-spin" /> connecting to Postgres…</div>
+  }
+  if (dbReady === false) {
+    return <PostgresGate onRetry={async () => {
+      const s = await invoke<{ connected: boolean }>('db_reconnect', {}).catch(() => ({ connected: false }))
+      setDbReady(s.connected)
+    }} />
+  }
 
   return (
     <div className="h-full flex">
@@ -152,6 +181,69 @@ export default function App() {
 
       <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       <Toaster />
+    </div>
+  )
+}
+
+function PostgresGate({ onRetry }: { onRetry: () => Promise<void> }) {
+  const [retrying, setRetrying] = useState(false)
+  const [copied, setCopied]     = useState<string | null>(null)
+  const [err, setErr]           = useState<string | null>(null)
+
+  // Mac install snippet. Linux/Windows users just run their package mgr.
+  const INSTALL = [
+    'brew install postgresql@16',
+    'brew services start postgresql@16',
+    'createuser --superuser systamator 2>/dev/null || true',
+    "psql -d postgres -c \"ALTER USER systamator WITH PASSWORD 'systamator';\"",
+    'createdb -O systamator systamator_v2',
+  ].join('\n')
+
+  async function retry() {
+    setRetrying(true); setErr(null)
+    try { await onRetry() } catch (e) { setErr(String((e as Error)?.message ?? e)) }
+    finally { setRetrying(false) }
+  }
+  function copy(text: string, id: string) {
+    navigator.clipboard.writeText(text).then(() => { setCopied(id); setTimeout(() => setCopied(null), 1500) })
+  }
+
+  return (
+    <div className="h-full flex items-center justify-center p-8">
+      <div className="max-w-[560px] w-full rounded-2xl border border-white/10 bg-[rgb(var(--c-surface))] shadow-2xl p-7">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-xl bg-[rgb(var(--c-danger)/0.14)] text-[rgb(var(--c-danger))] flex items-center justify-center">
+            <Database size={16} />
+          </div>
+          <div>
+            <div className="text-[16px] font-bold text-heading">Postgres required</div>
+            <div className="text-[11px] text-meta">Systamator v2 stores every run, step, agent, and skill in Postgres. It's not optional.</div>
+          </div>
+        </div>
+
+        <div className="text-[11px] text-meta mb-2">Expected: <code className="bg-white/5 rounded px-1 font-mono text-body">postgres://systamator:systamator@127.0.0.1:5435/systamator_v2</code></div>
+        <div className="text-[11px] text-meta mb-2">Or override with <code className="bg-white/5 rounded px-1 font-mono text-body">DATABASE_URL</code>.</div>
+
+        <div className="mt-4 rounded-xl border border-white/10 bg-black/30 p-3 relative">
+          <div className="text-[10px] font-bold text-meta uppercase tracking-wider mb-2 flex items-center justify-between">
+            <span>macOS install — paste into Terminal</span>
+            <button onClick={() => copy(INSTALL, 'install')} className="p-1 rounded hover:bg-white/5">
+              {copied === 'install' ? <Check size={11} className="text-[rgb(var(--c-success))]" /> : <Copy size={11} />}
+            </button>
+          </div>
+          <pre className="text-[11px] font-mono text-body whitespace-pre-wrap leading-relaxed">{INSTALL}</pre>
+        </div>
+        <div className="text-[10px] text-meta mt-2">Note: default port is 5432 — v2 uses <b>5435</b>. Either create a 5435 cluster or set <code className="bg-white/5 rounded px-1 font-mono">DATABASE_URL</code> to your 5432 instance and restart.</div>
+
+        <div className="mt-5 flex items-center gap-2">
+          <button onClick={retry} disabled={retrying}
+                  className="inline-flex items-center gap-2 px-4 h-9 rounded-xl gradient-primary text-white text-[12px] font-semibold disabled:opacity-50">
+            {retrying ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+            Retry connection
+          </button>
+          {err && <span className="text-[11px] text-[rgb(var(--c-danger))] font-mono">{err}</span>}
+        </div>
+      </div>
     </div>
   )
 }

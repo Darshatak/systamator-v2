@@ -16,7 +16,7 @@ import { toast } from '@/lib/toast'
 import { Card, Chip, Button } from '@/components/ui'
 
 interface McpServerSpec { name: string; command: string; args: string[]; env?: Record<string, string>; description: string; trusted: boolean }
-interface McpServerStatus { name: string; command: string; running: boolean; trusted: boolean }
+interface McpServerStatus { name: string; command: string; running: boolean; trusted: boolean; bundled: boolean }
 interface ConnectorSuggestion { spec: McpServerSpec; confidence: number; rationale: string; needsReview: boolean }
 
 interface Featured {
@@ -133,7 +133,10 @@ export function McpTab() {
                 <span className={clsx('w-2 h-2 rounded-full',
                   s.running && s.trusted ? 'bg-[rgb(var(--c-success))] dot-running' : s.trusted ? 'bg-[rgb(var(--c-warn))]' : 'bg-meta/40')} />
                 <div className="flex-1 min-w-0">
-                  <div className="text-[12px] font-semibold text-heading">{s.name}</div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[12px] font-semibold text-heading">{s.name}</span>
+                    {s.bundled && <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-[rgb(var(--c-primary)/0.14)] text-[rgb(var(--c-primary-2))] font-bold">bundled</span>}
+                  </div>
                   <div className="text-[10px] text-meta font-mono truncate">{s.command}</div>
                 </div>
                 <button onClick={() => toggleTrust(s.name, s.trusted)} title={s.trusted ? 'Trusted' : 'Untrusted'}
@@ -144,7 +147,9 @@ export function McpTab() {
                 {s.running
                   ? <button title="Stop" onClick={() => stop(s.name)} className="p-1.5 rounded-md text-meta hover:text-heading hover:bg-white/5"><PowerOff size={12} /></button>
                   : <button title="Start" onClick={() => start(s.name)} disabled={!s.trusted} className="p-1.5 rounded-md text-[rgb(var(--c-success))] hover:bg-white/5 disabled:opacity-40"><Power size={12} /></button>}
-                <button title="Remove" onClick={() => remove(s.name)} className="p-1.5 rounded-md text-[rgb(var(--c-danger))] hover:bg-[rgb(var(--c-danger)/0.1)]"><Trash2 size={12} /></button>
+                {!s.bundled && (
+                  <button title="Remove" onClick={() => remove(s.name)} className="p-1.5 rounded-md text-[rgb(var(--c-danger))] hover:bg-[rgb(var(--c-danger)/0.1)]"><Trash2 size={12} /></button>
+                )}
               </div>
             </Card>
           ))}

@@ -70,6 +70,11 @@ pub fn run() {
                 }
             });
 
+            // Seed the 7 mandatory MCPs (filesystem, fetch, memory, github,
+            // playwright, obsidian, openspace). Idempotent — picks up new
+            // defaults on upgrade, preserves user-filled env values.
+            mcp::seed_defaults(app.handle());
+
             // Keep ssh sessions warm — same heartbeat as v1.
             ssh::spawn_heartbeat(app.handle().clone(), 30);
             // Start the loopback bridge that lets the secondary browser

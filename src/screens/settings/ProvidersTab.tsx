@@ -1,10 +1,9 @@
 // Providers — both API-key signin and CLI signin in one place.
 
 import { useEffect, useState } from 'react'
-import { Sparkles, Bot, Cpu, Brain, Loader2, Check, KeyRound, Terminal, ExternalLink } from 'lucide-react'
-import clsx from 'clsx'
+import { Sparkles, Bot, Cpu, Brain, Loader2, Check, KeyRound, Terminal, ExternalLink, Globe } from 'lucide-react'
 import { kcGet, kcSet, KC_NS } from '@/lib/keychain'
-import { isDesktop } from '@/lib/ipc'
+import { isDesktop, listen } from '@/lib/ipc'
 import { cliDetect, cliLoginOpen, type CliDetectResult, type CliInfo } from '@/lib/api'
 import { Card, Button, Chip } from '@/components/ui'
 
@@ -50,8 +49,29 @@ function Row({ provider, cli }: { provider: Provider; cli: CliDetectResult | nul
   const [hasKey, setHasKey] = useState<boolean | null>(null)
   const [saving, setSaving] = useState(false)
   const [openingCli, setOpeningCli] = useState(false)
+  const [authUrl, setAuthUrl] = useState<string | null>(null)
+  const [authLine, setAuthLine] = useState<string | null>(null)
   const Icon = provider.icon
   const cliInfo: CliInfo | null = provider.cliKey && cli ? cli[provider.cliKey] : null
+
+  // Listen for CLI login output so we can surface the auth URL in case
+  // the CLI's own browser-launch fails (common in sandboxed dev builds).
+  useEffect(() => {
+    if (!provider.cliKey || !isDesktop()) return
+    let off1 = () => {}, off2 = () => {}
+    listen<{ provider: string; line: string; url: string | null }>('cli:login-line', p => {
+      if (p.provider !== provider.cliKey) return
+      if (p.url) setAuthUrl(p.url)
+      setAuthLine(p.line)
+    }).then(u => off1 = u)
+    listen<{ provider: string; exitCode: number }>('cli:login-done', p => {
+      if (p.provider !== provider.cliKey) return
+      setOpeningCli(false)
+      setAuthLine(p.exitCode === 0 ? 'Signed in.' : `Exited (${p.exitCode})`)
+      if (p.exitCode === 0) setAuthUrl(null)
+    }).then(u => off2 = u)
+    return () => { off1(); off2() }
+  }, [provider.cliKey])
 
   useEffect(() => {
     if (!isDesktop()) { setHasKey(false); return }
@@ -67,8 +87,9 @@ function Row({ provider, cli }: { provider: Provider; cli: CliDetectResult | nul
 
   async function openCliLogin() {
     if (!provider.cliKey) return
-    setOpeningCli(true)
-    try { await cliLoginOpen(provider.cliKey) } finally { setOpeningCli(false) }
+    setOpeningCli(true); setAuthUrl(null); setAuthLine('Launching…')
+    try { await cliLoginOpen(provider.cliKey) }
+    catch (e) { setAuthLine(String((e as Error)?.message ?? e)); setOpeningCli(false) }
   }
 
   return (
@@ -115,6 +136,21 @@ function Row({ provider, cli }: { provider: Provider; cli: CliDetectResult | nul
         <div className="mt-3 text-[11px] text-meta border-t border-white/8 pt-3 flex items-start gap-2">
           <ExternalLink size={11} className="mt-0.5 flex-shrink-0" />
           <span>{cliInfo.loginHint ?? `Install the ${provider.cliKey} CLI to enable OAuth sign-in.`}</span>
+        </div>
+      )}
+
+      {(authLine || authUrl) && (
+        <div className="mt-3 border-t border-white/8 pt-3">
+          <div className="flex items-center gap-2 text-[11px]">
+            <Globe size={11} className="text-[rgb(var(--c-primary-2))]" />
+            <span className="text-meta font-mono truncate flex-1">{authLine}</span>
+          </div>
+          {authUrl && (
+            <a href={authUrl} target="_blank" rel="noreferrer"
+               className="mt-2 flex items-center gap-2 text-[10px] text-[rgb(var(--c-primary-2))] hover:underline font-mono break-all">
+              <ExternalLink size={10} /> {authUrl}
+            </a>
+          )}
         </div>
       )}
     </Card>

@@ -65,37 +65,90 @@ pub fn cli_detect() -> CliDetectResult {
     }
 }
 
-// ── Open the user's terminal at the login command ────────────────────────
+// ── Browser-based OAuth login ─────────────────────────────────────────────
 //
-// Best-effort: on macOS we ask Terminal.app to open a new tab running the
-// login. Linux/Windows fallbacks just print the command and tell the user
-// to copy it. The user finishes auth in their terminal, then comes back to
-// the app — `cli_detect` will reflect it.
+// All four CLIs use OAuth that opens a browser. Previously we bounced
+// through Terminal.app which is clunky — now we spawn the login
+// subcommand directly with stdin/stdout piped, watch for the auth URL
+// in its output, and hand the URL to the OS default browser via `open`.
+// The CLI process itself keeps running to finish the OAuth exchange;
+// the user completes auth in browser, the CLI exits, credentials land
+// on disk. cli_detect on the next poll reflects logged-in state.
+
+fn login_cmd(provider: &str) -> Option<(&'static str, Vec<&'static str>)> {
+    match provider {
+        "claude"   => Some(("claude",   vec!["/login"])),        // TUI-less login in recent versions
+        "codex"    => Some(("codex",    vec!["login"])),
+        "gemini"   => Some(("gemini",   vec!["auth", "login"])),
+        "opencode" => Some(("opencode", vec!["login"])),
+        _ => None,
+    }
+}
 
 #[tauri::command]
-pub fn cli_login_open(provider: String) -> Result<String, String> {
-    let cmd = match provider.as_str() {
-        "claude"   => "claude",
-        "codex"    => "codex login",
-        "gemini"   => "gemini auth login",
-        "opencode" => "opencode login",
-        _ => return Err(format!("unknown provider: {provider}")),
-    };
+pub fn cli_login_open(app: tauri::AppHandle, provider: String) -> Result<String, String> {
+    use tauri::Emitter;
+    let (bin, args) = login_cmd(&provider).ok_or_else(|| format!("unknown provider: {provider}"))?;
 
-    #[cfg(target_os = "macos")]
-    {
-        let script = format!(
-            r#"tell application "Terminal" to do script "{}"
-               tell application "Terminal" to activate"#,
-            cmd.replace('"', "\\\""),
-        );
-        let _ = Command::new("osascript").arg("-e").arg(&script).status();
-        return Ok(format!("Opened Terminal with: {cmd}"));
+    // Spawn detached — the CLI itself opens the system browser via `open`
+    // on macOS / `xdg-open` on Linux. We stream its stdout/stderr back so
+    // the UI can surface the auth URL in case auto-open fails.
+    let mut child = Command::new(bin)
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("spawn {bin}: {e}"))?;
+
+    let provider_out = provider.clone();
+    let app_out = app.clone();
+    if let Some(out) = child.stdout.take() {
+        std::thread::spawn(move || stream_login_output(app_out, &provider_out, out, "stdout"));
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        return Ok(format!("Run this in your shell: {cmd}"));
+    let provider_err = provider.clone();
+    let app_err = app.clone();
+    if let Some(err) = child.stderr.take() {
+        std::thread::spawn(move || stream_login_output(app_err, &provider_err, err, "stderr"));
     }
+    // Reap the child in the background so it doesn't zombie — we don't
+    // block the Tauri command since auth can take a minute.
+    std::thread::spawn(move || {
+        let code = child.wait().map(|s| s.code().unwrap_or(-1)).unwrap_or(-2);
+        let _ = app.emit("cli:login-done", serde_json::json!({ "provider": provider, "exitCode": code }));
+    });
+
+    Ok(format!("Launched {bin} {} — browser will open for OAuth", args.join(" ")))
+}
+
+fn stream_login_output<R: std::io::Read>(app: tauri::AppHandle, provider: &str, r: R, stream: &str) {
+    use tauri::Emitter;
+    use std::io::BufRead;
+    let br = std::io::BufReader::new(r);
+    for line in br.lines().map_while(Result::ok) {
+        // Extract https://… auth URLs from CLI chatter — both for the UI
+        // ("if browser didn't open, click here") and for a fallback
+        // `open <url>` we fire ourselves the first time we see one.
+        let url = find_auth_url(&line);
+        if let Some(ref u) = url {
+            #[cfg(target_os = "macos")]
+            { let _ = Command::new("open").arg(u).status(); }
+            #[cfg(target_os = "linux")]
+            { let _ = Command::new("xdg-open").arg(u).status(); }
+            #[cfg(target_os = "windows")]
+            { let _ = Command::new("cmd").args(["/C", "start", "", u]).status(); }
+        }
+        let _ = app.emit("cli:login-line", serde_json::json!({
+            "provider": provider, "stream": stream, "line": line, "url": url,
+        }));
+    }
+}
+
+fn find_auth_url(s: &str) -> Option<String> {
+    let start = s.find("https://")?;
+    let tail = &s[start..];
+    let end = tail.find(|c: char| c.is_whitespace() || c == ')' || c == '>' || c == '"').unwrap_or(tail.len());
+    Some(tail[..end].to_string())
 }
 
 // ── Non-interactive prompt execution ─────────────────────────────────────

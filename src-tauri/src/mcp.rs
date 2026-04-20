@@ -31,6 +31,112 @@ pub struct McpServerSpec {
     #[serde(default)] pub env:         HashMap<String, String>,
     #[serde(default)] pub description: String,
     #[serde(default)] pub trusted:     bool,
+    /// True for the 7 required MCPs seeded on first boot. User may fill
+    /// env vars but shouldn't remove them — the orchestrator treats them
+    /// as always-available capabilities.
+    #[serde(default)] pub bundled:     bool,
+}
+
+/// The mandatory capabilities every v2 install gets. Seeded once on boot
+/// (idempotent — existing entries keep their env/trusted state and only
+/// pick up new fields on the merge side). All trusted=true so they can
+/// actually be invoked without a settings round-trip; env vars that need
+/// secrets (GitHub token, Obsidian API key) start empty and the UI
+/// prompts when a tool call fails with "missing env".
+fn default_servers() -> Vec<McpServerSpec> {
+    let mut env_empty = HashMap::new();
+    env_empty.clear();
+
+    let github_env: HashMap<String, String> =
+        [("GITHUB_PERSONAL_ACCESS_TOKEN".to_string(), String::new())].into_iter().collect();
+    let obsidian_env: HashMap<String, String> =
+        [("OBSIDIAN_API_KEY".to_string(), String::new()),
+         ("OBSIDIAN_HOST".to_string(), "127.0.0.1".to_string()),
+         ("OBSIDIAN_PORT".to_string(), "27124".to_string())].into_iter().collect();
+
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+
+    vec![
+        McpServerSpec {
+            name: "filesystem".into(),
+            command: "npx".into(),
+            args: vec!["-y".into(), "@modelcontextprotocol/server-filesystem".into(), home.clone()],
+            env: env_empty.clone(),
+            description: "Read/write files under ~/ — scoped, sandboxed fs access.".into(),
+            trusted: true, bundled: true,
+        },
+        McpServerSpec {
+            name: "fetch".into(),
+            command: "npx".into(),
+            args: vec!["-y".into(), "@modelcontextprotocol/server-fetch".into()],
+            env: env_empty.clone(),
+            description: "HTTP fetcher — web pages + JSON APIs.".into(),
+            trusted: true, bundled: true,
+        },
+        McpServerSpec {
+            name: "memory".into(),
+            command: "npx".into(),
+            args: vec!["-y".into(), "@modelcontextprotocol/server-memory".into()],
+            env: env_empty.clone(),
+            description: "Knowledge-graph memory persisted across runs.".into(),
+            trusted: true, bundled: true,
+        },
+        McpServerSpec {
+            name: "github".into(),
+            command: "npx".into(),
+            args: vec!["-y".into(), "@modelcontextprotocol/server-github".into()],
+            env: github_env,
+            description: "GitHub API — issues, PRs, repo ops. Needs a PAT in env.".into(),
+            trusted: true, bundled: true,
+        },
+        McpServerSpec {
+            name: "playwright".into(),
+            command: "npx".into(),
+            args: vec!["-y".into(), "@playwright/mcp".into()],
+            env: env_empty.clone(),
+            description: "Full browser automation (headless Chromium) for scraping + E2E.".into(),
+            trusted: true, bundled: true,
+        },
+        McpServerSpec {
+            name: "obsidian".into(),
+            command: "npx".into(),
+            args: vec!["-y".into(), "mcp-obsidian".into()],
+            env: obsidian_env,
+            description: "Obsidian vault — read notes, search, append. Needs Local REST API plugin.".into(),
+            trusted: true, bundled: true,
+        },
+        McpServerSpec {
+            name: "openspace".into(),
+            command: "npx".into(),
+            args: vec!["-y".into(), "openspace-mcp".into()],
+            env: env_empty,
+            description: "OpenSpace — agent coordination + workspace awareness.".into(),
+            trusted: true, bundled: true,
+        },
+    ]
+}
+
+/// Idempotent: on every boot, ensure each default exists. Existing
+/// entries keep their env (user may have filled tokens in) but pick up
+/// any updated `command`/`args`/`description` from the hard-coded list.
+pub fn seed_defaults(app: &AppHandle) {
+    let mut specs = load_specs(app);
+    for d in default_servers() {
+        match specs.iter_mut().find(|s| s.name == d.name) {
+            Some(existing) => {
+                existing.command     = d.command;
+                existing.args        = d.args;
+                existing.description = d.description;
+                existing.bundled     = true;
+                // Merge: keep user-provided env values, add any new keys.
+                for (k, v) in d.env {
+                    existing.env.entry(k).or_insert(v);
+                }
+            }
+            None => specs.push(d),
+        }
+    }
+    save_specs(app, &specs);
 }
 
 fn load_specs(app: &AppHandle) -> Vec<McpServerSpec> {
@@ -181,6 +287,9 @@ pub fn mcp_save_server(app: AppHandle, spec: McpServerSpec) -> Result<McpServerS
 
 #[tauri::command]
 pub async fn mcp_remove_server(app: AppHandle, state: tauri::State<'_, McpState>, name: String) -> Result<(), String> {
+    if let Some(s) = load_specs(&app).into_iter().find(|s| s.name == name) {
+        if s.bundled { return Err(format!("'{name}' is bundled — edit its env instead of removing.")); }
+    }
     state.stop(&name).await;
     let all: Vec<_> = load_specs(&app).into_iter().filter(|s| s.name != name).collect();
     save_specs(&app, &all);
@@ -198,14 +307,14 @@ pub fn mcp_set_trusted(app: AppHandle, name: String, trusted: bool) -> Result<()
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct McpServerStatus { pub name: String, pub command: String, pub running: bool, pub trusted: bool }
+pub struct McpServerStatus { pub name: String, pub command: String, pub running: bool, pub trusted: bool, pub bundled: bool }
 
 #[tauri::command]
 pub async fn mcp_server_status(app: AppHandle, state: tauri::State<'_, McpState>) -> Result<Vec<McpServerStatus>, String> {
     let specs = load_specs(&app);
     let clients = state.clients.read().await;
     Ok(specs.into_iter().map(|s| McpServerStatus {
-        running: clients.contains_key(&s.name), trusted: s.trusted, name: s.name, command: s.command,
+        running: clients.contains_key(&s.name), trusted: s.trusted, bundled: s.bundled, name: s.name, command: s.command,
     }).collect())
 }
 

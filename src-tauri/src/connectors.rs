@@ -18,7 +18,7 @@ fn npx(name: &str, pkg: &str, desc: &str, extra: &[&str]) -> ConnectorSuggestion
     let mut args = vec!["-y".into(), pkg.into()];
     args.extend(extra.iter().map(|s| s.to_string()));
     ConnectorSuggestion {
-        spec: McpServerSpec { name: name.into(), command: "npx".into(), args, env: Default::default(), description: desc.into(), trusted: false },
+        spec: McpServerSpec { name: name.into(), command: "npx".into(), args, env: Default::default(), description: desc.into(), trusted: false, bundled: false },
         confidence: 0.85, rationale: format!("Spawn `{pkg}` via npx"), needs_review: false,
     }
 }
@@ -26,7 +26,7 @@ fn any_cli(bin: &str) -> ConnectorSuggestion {
     ConnectorSuggestion {
         spec: McpServerSpec { name: bin.into(), command: "npx".into(),
             args: vec!["-y".into(), "any-cli-mcp-server".into(), bin.into()],
-            env: Default::default(), description: format!("Wrap `{bin}` CLI via --help"), trusted: false },
+            env: Default::default(), description: format!("Wrap `{bin}` CLI via --help"), trusted: false, bundled: false },
         confidence: 0.7, rationale: format!("any-cli-mcp-server {bin}"), needs_review: true,
     }
 }
@@ -71,7 +71,7 @@ pub fn connector_resolve(utterance: String) -> Option<ConnectorSuggestion> {
             spec: McpServerSpec {
                 name: sanitise(url), command: "uvx".into(),
                 args: vec!["mcp-anything".into(), url.clone()],
-                env: Default::default(), description: format!("Wrap OpenAPI/REST at {url}"), trusted: false,
+                env: Default::default(), description: format!("Wrap OpenAPI/REST at {url}"), trusted: false, bundled: false,
             },
             confidence: 0.6, rationale: "URL → mcp-anything".into(), needs_review: true,
         });
@@ -122,7 +122,7 @@ fn resolve_local_path(raw: &str) -> Option<ConnectorSuggestion> {
                 args: vec![full.to_string_lossy().into_owned()],
                 env: Default::default(),
                 description: format!("Local MCP at {}", full.display()),
-                trusted: false,
+                trusted: false, bundled: false,
             },
             confidence: 0.85, rationale: format!("`{} {}`", cmd, full.display()), needs_review: false,
         });
@@ -136,7 +136,7 @@ fn resolve_local_path(raw: &str) -> Option<ConnectorSuggestion> {
                 args: vec![entry.to_string_lossy().into_owned()],
                 env: Default::default(),
                 description: format!("Node MCP in {}", full.display()),
-                trusted: false,
+                trusted: false, bundled: false,
             },
             confidence: 0.8, rationale: format!("node {}", entry.display()), needs_review: false,
         });
