@@ -4,7 +4,7 @@
 // Right: file viewer / diff preview / run output. Top: run-command field.
 
 import { useEffect, useMemo, useState } from 'react'
-import { FolderOpen, File, FileText, Terminal, GitBranch, Folder, ChevronRight, Loader2, Play, Save, RefreshCw } from 'lucide-react'
+import { FolderOpen, File, FileText, Terminal, GitBranch, Folder, ChevronRight, Loader2, Play, Save, RefreshCw, Layers, Trash2, Plus } from 'lucide-react'
 import { invoke } from '@/lib/ipc'
 import { Card, Chip, TopBar, Button, Empty } from '@/components/ui'
 import clsx from 'clsx'
@@ -13,6 +13,7 @@ interface FsEntry { name: string; path: string; isDir: boolean; size: number; mo
 interface FsRead  { path: string; bytes: number; truncated: boolean; text: string }
 interface RunShellResult { stdout: string; stderr: string; exitCode: number; wallMs: number }
 interface GitStatus { branch: string; upstream: string | null; ahead: number; behind: number; staged: string[]; modified: string[]; untracked: string[] }
+interface WorktreeInfo { id: string; path: string; repo: string; branch: string; createdAt: number }
 
 const LS_WS = 'systamator.code.workspace'
 
@@ -30,6 +31,8 @@ export default function CodeScreen() {
   const [git,     setGit]         = useState<GitStatus | null>(null)
   const [gitErr,  setGitErr]      = useState<string | null>(null)
   const [diff,    setDiff]        = useState<string | null>(null)
+  const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([])
+  const [wtBusy, setWtBusy]       = useState(false)
 
   async function loadDir(path: string) {
     setEntries(null); setActive(null); setFile(null); setEditing(null)
@@ -41,6 +44,28 @@ export default function CodeScreen() {
     setGit(null); setGitErr(null)
     try { setGit(await invoke<GitStatus>('git_status', { cwd: workspace })) }
     catch (e) { setGitErr(String((e as Error)?.message ?? e)) }
+  }
+
+  async function loadWorktrees() {
+    try { setWorktrees(await invoke<WorktreeInfo[]>('worktree_list', {})) }
+    catch { setWorktrees([]) }
+  }
+
+  async function createWorktree() {
+    setWtBusy(true)
+    try {
+      const runId = `adhoc-${Date.now().toString(36)}`
+      await invoke('worktree_create', { repoPath: workspace, runId })
+      await loadWorktrees()
+    } catch (e) { alert(`worktree_create failed: ${String((e as Error)?.message ?? e)}`) }
+    finally { setWtBusy(false) }
+  }
+
+  async function removeWorktree(id: string, repo: string) {
+    setWtBusy(true)
+    try { await invoke('worktree_remove', { runId: id, repoPath: repo }); await loadWorktrees() }
+    catch (e) { alert(`worktree_remove failed: ${String((e as Error)?.message ?? e)}`) }
+    finally { setWtBusy(false) }
   }
 
   async function openFile(e: FsEntry) {
@@ -71,7 +96,7 @@ export default function CodeScreen() {
     finally { setRunning(false) }
   }
 
-  useEffect(() => { localStorage.setItem(LS_WS, workspace); loadDir(workspace); loadGit() /* eslint-disable-next-line */ }, [workspace])
+  useEffect(() => { localStorage.setItem(LS_WS, workspace); loadDir(workspace); loadGit(); loadWorktrees() /* eslint-disable-next-line */ }, [workspace])
 
   const breadcrumbs = useMemo(() => cwd.replace(/^\/+/, '').split('/').filter(Boolean), [cwd])
 
@@ -146,6 +171,32 @@ export default function CodeScreen() {
             </Card>
           )}
           {gitErr && <div className="text-[11px] text-meta">git: not a repo (or git missing)</div>}
+
+          {/* Worktrees */}
+          <Card padding="sm">
+            <div className="flex items-center gap-2 mb-2">
+              <Layers size={12} className="text-[rgb(var(--c-primary-2))]" />
+              <span className="text-[11px] font-bold text-heading uppercase tracking-[0.18em]">Worktrees</span>
+              <Chip className="ml-auto">{worktrees.length}</Chip>
+              <Button size="sm" variant="soft" icon={<Plus size={11} />} onClick={createWorktree} disabled={wtBusy}>New</Button>
+            </div>
+            {worktrees.length === 0 ? (
+              <div className="text-[11px] text-meta">No worktrees. Creating one spawns <code className="bg-white/5 rounded px-1 font-mono">git worktree add -b systamator/&lt;id&gt;</code> under <code className="bg-white/5 rounded px-1 font-mono">~/.systamator/worktrees/</code> so parallel runs stay isolated.</div>
+            ) : (
+              <div className="space-y-1">
+                {worktrees.map(w => (
+                  <div key={w.id} className="flex items-center gap-2 text-[11px] px-2 py-1 rounded-md bg-white/[0.02]">
+                    <span className="font-mono text-body truncate flex-1">{w.path}</span>
+                    <Chip tone="primary">{w.branch.replace('systamator/', '')}</Chip>
+                    <button title="Remove" onClick={() => removeWorktree(w.id, w.repo)}
+                            className="p-1 rounded-md text-[rgb(var(--c-danger))] hover:bg-[rgb(var(--c-danger)/0.1)]">
+                      <Trash2 size={11} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
 
           {/* File viewer / editor */}
           {file && active && !active.isDir && (

@@ -35,6 +35,7 @@ mod embeddings;
 mod importer;
 mod orchestrator;
 mod runs;
+mod worktree;
 mod skills;
 mod resources;
 mod db;
@@ -143,6 +144,9 @@ pub fn run() {
             code::git_status,
             code::git_diff,
             importer::v1_import,
+            worktree::worktree_create,
+            worktree::worktree_remove,
+            worktree::worktree_list,
             skills::skill_list,
             skills::skill_record,
             skills::skill_search,
