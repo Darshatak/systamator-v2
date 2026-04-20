@@ -74,10 +74,7 @@ export default function App() {
     return <div className="h-full flex items-center justify-center text-meta text-[12px] gap-2"><Loader2 size={14} className="animate-spin" /> connecting to Postgres…</div>
   }
   if (dbReady === false) {
-    return <PostgresGate onRetry={async () => {
-      const s = await invoke<{ connected: boolean }>('db_reconnect', {}).catch(() => ({ connected: false }))
-      setDbReady(s.connected)
-    }} />
+    return <PostgresGate onConnected={() => setDbReady(true)} />
   }
 
   return (
@@ -201,32 +198,56 @@ export default function App() {
   )
 }
 
-function PostgresGate({ onRetry }: { onRetry: () => Promise<void> }) {
+function PostgresGate({ onConnected }: { onConnected: () => void }) {
   const [retrying, setRetrying] = useState(false)
   const [copied, setCopied]     = useState<string | null>(null)
   const [err, setErr]           = useState<string | null>(null)
+  const [status, setStatus]     = useState<{ connected: boolean; message: string; url: string; source: string } | null>(null)
+  const [urlDraft, setUrlDraft] = useState<string>('')
+  const [saving, setSaving]     = useState(false)
 
-  // Mac install snippet. Linux/Windows users just run their package mgr.
+  useEffect(() => {
+    invoke<{ connected: boolean; message: string; url: string; source: string }>('db_status', {})
+      .then(s => { setStatus(s); setUrlDraft(s.url) })
+      .catch(() => {})
+  }, [])
+
+  // Install snippet assumes brew default cluster on 5432 — the v2
+  // default URL points at 5432 too, so this works zero-config.
   const INSTALL = [
     'brew install postgresql@16',
     'brew services start postgresql@16',
     'createuser --superuser systamator 2>/dev/null || true',
-    "psql -d postgres -c \"ALTER USER systamator WITH PASSWORD 'systamator';\"",
-    'createdb -O systamator systamator_v2',
+    'createdb -O systamator systamator_v2 2>/dev/null || true',
   ].join('\n')
 
   async function retry() {
     setRetrying(true); setErr(null)
-    try { await onRetry() } catch (e) { setErr(String((e as Error)?.message ?? e)) }
+    try {
+      const s = await invoke<{ connected: boolean; message: string; url: string; source: string }>('db_reconnect', {})
+      setStatus(s)
+      if (s.connected) { onConnected(); return }
+      setErr(s.message)
+    } catch (e) { setErr(String((e as Error)?.message ?? e)) }
     finally { setRetrying(false) }
+  }
+  async function saveUrl() {
+    setSaving(true); setErr(null)
+    try {
+      const s = await invoke<{ connected: boolean; message: string; url: string; source: string }>('db_set_url', { url: urlDraft })
+      setStatus(s)
+      if (s.connected) { onConnected(); return }
+      setErr(s.message)
+    } catch (e) { setErr(String((e as Error)?.message ?? e)) }
+    finally { setSaving(false) }
   }
   function copy(text: string, id: string) {
     navigator.clipboard.writeText(text).then(() => { setCopied(id); setTimeout(() => setCopied(null), 1500) })
   }
 
   return (
-    <div className="h-full flex items-center justify-center p-8">
-      <div className="max-w-[560px] w-full rounded-2xl border border-white/10 bg-[rgb(var(--c-surface))] shadow-2xl p-7">
+    <div className="h-full flex items-center justify-center p-8 overflow-auto">
+      <div className="max-w-[600px] w-full rounded-2xl border border-white/10 bg-[rgb(var(--c-surface))] shadow-2xl p-7">
         <div className="flex items-center gap-3 mb-4">
           <div className="w-10 h-10 rounded-xl bg-[rgb(var(--c-danger)/0.14)] text-[rgb(var(--c-danger))] flex items-center justify-center">
             <Database size={16} />
@@ -237,10 +258,31 @@ function PostgresGate({ onRetry }: { onRetry: () => Promise<void> }) {
           </div>
         </div>
 
-        <div className="text-[11px] text-meta mb-2">Expected: <code className="bg-white/5 rounded px-1 font-mono text-body">postgres://systamator:systamator@127.0.0.1:5435/systamator_v2</code></div>
-        <div className="text-[11px] text-meta mb-2">Or override with <code className="bg-white/5 rounded px-1 font-mono text-body">DATABASE_URL</code>.</div>
+        {/* Live status */}
+        {status && (
+          <div className="text-[11px] text-meta mb-3">
+            Tried <code className="bg-white/5 rounded px-1 font-mono text-body">{status.url}</code>
+            <span className="ml-2 opacity-60">(source: {status.source})</span>
+          </div>
+        )}
 
-        <div className="mt-4 rounded-xl border border-white/10 bg-black/30 p-3 relative">
+        {/* Connection URL editor */}
+        <div className="mb-4">
+          <div className="text-[10px] font-bold text-meta uppercase tracking-wider mb-1.5">Connection URL</div>
+          <div className="flex items-center gap-2">
+            <input value={urlDraft} onChange={e => setUrlDraft(e.target.value)}
+                   placeholder="postgres://user:pass@host:port/db"
+                   className="flex-1 h-9 px-3 rounded-lg border border-white/10 bg-white/5 text-[12px] font-mono text-heading outline-none focus:border-[rgb(var(--c-primary)/0.6)]" />
+            <button onClick={saveUrl} disabled={saving}
+                    className="inline-flex items-center gap-2 px-3 h-9 rounded-lg bg-white/5 border border-white/10 text-[12px] text-body hover:bg-white/10 disabled:opacity-50">
+              {saving ? <Loader2 size={12} className="animate-spin" /> : 'Save & try'}
+            </button>
+          </div>
+          <div className="text-[10px] text-meta mt-1">Env <code className="bg-white/5 rounded px-1 font-mono">DATABASE_URL</code> wins if set — otherwise this value is stored in app settings.</div>
+        </div>
+
+        {/* Install snippet */}
+        <div className="rounded-xl border border-white/10 bg-black/30 p-3 relative">
           <div className="text-[10px] font-bold text-meta uppercase tracking-wider mb-2 flex items-center justify-between">
             <span>macOS install — paste into Terminal</span>
             <button onClick={() => copy(INSTALL, 'install')} className="p-1 rounded hover:bg-white/5">
@@ -249,7 +291,9 @@ function PostgresGate({ onRetry }: { onRetry: () => Promise<void> }) {
           </div>
           <pre className="text-[11px] font-mono text-body whitespace-pre-wrap leading-relaxed">{INSTALL}</pre>
         </div>
-        <div className="text-[10px] text-meta mt-2">Note: default port is 5432 — v2 uses <b>5435</b>. Either create a 5435 cluster or set <code className="bg-white/5 rounded px-1 font-mono">DATABASE_URL</code> to your 5432 instance and restart.</div>
+        <div className="text-[10px] text-meta mt-2">
+          brew's default cluster runs on port 5432 — the v2 default URL matches. If your Postgres lives elsewhere, paste its URL above instead.
+        </div>
 
         <div className="mt-5 flex items-center gap-2">
           <button onClick={retry} disabled={retrying}
@@ -257,7 +301,7 @@ function PostgresGate({ onRetry }: { onRetry: () => Promise<void> }) {
             {retrying ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
             Retry connection
           </button>
-          {err && <span className="text-[11px] text-[rgb(var(--c-danger))] font-mono">{err}</span>}
+          {err && <span className="text-[11px] text-[rgb(var(--c-danger))] font-mono truncate">{err}</span>}
         </div>
       </div>
     </div>

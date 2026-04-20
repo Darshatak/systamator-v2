@@ -59,8 +59,9 @@ pub fn run() {
             // isn't running yet — features that need it surface a friendly
             // error instead of a startup crash.
             let db = app.state::<DbState>().inner().clone();
+            let app_for_db = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                match db::try_connect().await {
+                match db::try_connect(Some(&app_for_db)).await {
                     Ok(pool) => {
                         let _ = db::run_migrations(&pool).await;
                         *db.pool.lock().await = Some(pool);
@@ -177,6 +178,7 @@ pub fn run() {
             resources::resource_delete,
             db::db_status,
             db::db_reconnect,
+            db::db_set_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Systamator v2");
