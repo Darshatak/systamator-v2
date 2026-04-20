@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Search, ArrowRight, Target, Server, Users, Sparkles, Settings,
-  Home, KeyRound, Plug, Globe, ChevronRight,
+  Search, ArrowRight, MessageSquare, Server, Sparkles,
+  Home, KeyRound, ChevronRight,
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -31,20 +31,23 @@ export function Palette({ open, onClose }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
 
   const items: PaletteItem[] = useMemo(() => [
-    { id: 'nav-home',     label: 'Home',     group: 'Navigate', run: () => navigate('/'),         hint: 'g h' },
-    { id: 'nav-goals',    label: 'Goals',    group: 'Navigate', run: () => navigate('/goals'),    hint: 'g g' },
-    { id: 'nav-fleet',    label: 'Fleet',    group: 'Navigate', run: () => navigate('/fleet'),    hint: 'g f' },
-    { id: 'nav-agents',   label: 'Agents',   group: 'Navigate', run: () => navigate('/agents'),   hint: 'g a' },
-    { id: 'nav-skills',   label: 'Skills',   group: 'Navigate', run: () => navigate('/skills'),   hint: 'g s' },
-    { id: 'nav-settings', label: 'Settings', group: 'Navigate', run: () => navigate('/settings'), hint: 'g .' },
-    { id: 'goal-new',     label: 'New goal',                          group: 'Quick action', run: () => navigate('/goals?new=1') },
-    { id: 'fleet-add',    label: 'Add SSH server',                    group: 'Quick action', run: () => navigate('/fleet?add=ssh') },
-    { id: 'login',        label: '/login — connect a provider',       group: 'Quick action', run: () => navigate('/settings/providers') },
+    { id: 'nav-home',       label: 'Home',       group: 'Navigate', run: () => navigate('/'),           hint: 'g h' },
+    { id: 'nav-chat',       label: 'Chat',       group: 'Navigate', run: () => navigate('/chat'),       hint: 'g c' },
+    { id: 'nav-fleet',      label: 'Fleet',      group: 'Navigate', run: () => navigate('/fleet'),      hint: 'g f' },
+    { id: 'nav-apps',       label: 'Apps',       group: 'Navigate', run: () => navigate('/apps'),       hint: 'g p' },
+    { id: 'nav-containers', label: 'Containers', group: 'Navigate', run: () => navigate('/containers'), hint: 'g d' },
+    { id: 'nav-cron',       label: 'Cron',       group: 'Navigate', run: () => navigate('/cron'),       hint: 'g r' },
+    { id: 'nav-flows',      label: 'Flows',      group: 'Navigate', run: () => navigate('/flows'),      hint: 'g w' },
+    { id: 'nav-skills',     label: 'Skills',     group: 'Navigate', run: () => navigate('/skills'),     hint: 'g s' },
+    { id: 'nav-settings',   label: 'Settings',   group: 'Navigate', run: () => navigate('/settings'),   hint: 'g .' },
+    { id: 'chat-new',       label: 'Ask AI — new task',           group: 'Quick action', run: () => navigate('/chat') },
+    { id: 'fleet-add',      label: 'Add SSH server',              group: 'Quick action', run: () => navigate('/fleet?add=ssh') },
+    { id: 'login',          label: '/login — connect a provider', group: 'Quick action', run: () => navigate('/settings/providers') },
     ...SAMPLE_GOALS.map((g, i) => ({
       id: `sample-${i}`,
       label: g,
-      group: 'Try a goal',
-      run: () => navigate('/goals?new=1&prefill=' + encodeURIComponent(g)),
+      group: 'Try a task',
+      run: () => navigate('/chat?prefill=' + encodeURIComponent(g)),
     })),
   ], [navigate])
 
@@ -142,9 +145,8 @@ function PaletteIcon({ group, active }: { group: string; active: boolean }) {
   const Icon =
     group === 'Navigate'    ? Home :
     group === 'Quick action'? KeyRound :
-    group === 'Try a goal'  ? Target :
+    group === 'Try a task'  ? MessageSquare :
     group === 'Fleet'       ? Server :
-    group === 'Agents'      ? Users :
     group === 'Skills'      ? Sparkles :
                               ChevronRight
   return (
@@ -154,3 +156,4 @@ function PaletteIcon({ group, active }: { group: string; active: boolean }) {
     </span>
   )
 }
+

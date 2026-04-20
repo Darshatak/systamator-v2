@@ -1,8 +1,8 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { Routes, Route, NavLink, Navigate } from 'react-router-dom'
 import {
-  Home, Target, Server, Users, Sparkles, Settings as Cog,
-  Inbox, Command, ChevronsLeft, ChevronsRight, Globe, Code2,
+  Home, MessageSquare, Server, Boxes, Container, CalendarClock, Workflow,
+  Sparkles, Settings as Cog, Inbox, Command, ChevronsLeft, ChevronsRight,
   Database, RefreshCw, Loader2, Copy, Check,
 } from 'lucide-react'
 import clsx from 'clsx'
@@ -10,25 +10,34 @@ import { Palette } from './components/palette/Palette'
 import { Toaster } from './components/ui/Toaster'
 import { invoke, isDesktop } from './lib/ipc'
 
-const HomeScreen      = lazy(() => import('./screens/home/HomeScreen'))
-const GoalsScreen     = lazy(() => import('./screens/goals/GoalsScreen'))
-const RunDetailScreen = lazy(() => import('./screens/runs/RunDetailScreen'))
-const FleetScreen     = lazy(() => import('./screens/fleet/FleetScreen'))
-const AgentsScreen    = lazy(() => import('./screens/agents/AgentsScreen'))
-const SkillsScreen    = lazy(() => import('./screens/skills/SkillsScreen'))
-const SettingsScreen  = lazy(() => import('./screens/settings/SettingsScreen'))
-const InboxScreen     = lazy(() => import('./screens/inbox/InboxScreen'))
-const BrowserScreen   = lazy(() => import('./screens/browser/BrowserScreen'))
-const CodeScreen      = lazy(() => import('./screens/code/CodeScreen'))
+const HomeScreen       = lazy(() => import('./screens/home/HomeScreen'))
+const ChatScreen       = lazy(() => import('./screens/chat/ChatScreen'))
+const GoalsScreen      = lazy(() => import('./screens/goals/GoalsScreen'))
+const RunDetailScreen  = lazy(() => import('./screens/runs/RunDetailScreen'))
+const FleetScreen      = lazy(() => import('./screens/fleet/FleetScreen'))
+const AgentsScreen     = lazy(() => import('./screens/agents/AgentsScreen'))
+const SkillsScreen     = lazy(() => import('./screens/skills/SkillsScreen'))
+const SettingsScreen   = lazy(() => import('./screens/settings/SettingsScreen'))
+const InboxScreen      = lazy(() => import('./screens/inbox/InboxScreen'))
+const BrowserScreen    = lazy(() => import('./screens/browser/BrowserScreen'))
+const CodeScreen       = lazy(() => import('./screens/code/CodeScreen'))
+const AppsScreen       = lazy(() => import('./screens/infra/AppsScreen'))
+const ContainersScreen = lazy(() => import('./screens/infra/ContainersScreen'))
+const CronScreen       = lazy(() => import('./screens/infra/CronScreen'))
+const FlowsScreen      = lazy(() => import('./screens/infra/FlowsScreen'))
 
+// Infrastructure-first rail (v1-shape). Goals/Browser/Code/Agents are
+// intentionally absent — they're observer sub-tabs inside /runs/:id now,
+// not standalone destinations.
 const NAV = [
-  { to: '/',         icon: Home,     label: 'Home' },
-  { to: '/goals',    icon: Target,   label: 'Goals' },
-  { to: '/fleet',    icon: Server,   label: 'Fleet' },
-  { to: '/browser',  icon: Globe,    label: 'Browser' },
-  { to: '/code',     icon: Code2,    label: 'Code' },
-  { to: '/agents',   icon: Users,    label: 'Agents' },
-  { to: '/skills',   icon: Sparkles, label: 'Skills' },
+  { to: '/',           icon: Home,          label: 'Home' },
+  { to: '/chat',       icon: MessageSquare, label: 'Chat' },
+  { to: '/fleet',      icon: Server,        label: 'Fleet' },
+  { to: '/apps',       icon: Boxes,         label: 'Apps' },
+  { to: '/containers', icon: Container,     label: 'Containers' },
+  { to: '/cron',       icon: CalendarClock, label: 'Cron' },
+  { to: '/flows',      icon: Workflow,      label: 'Flows' },
+  { to: '/skills',     icon: Sparkles,      label: 'Skills' },
 ] as const
 
 export default function App() {
@@ -164,17 +173,24 @@ export default function App() {
       <main className="flex-1 min-w-0 overflow-hidden flex flex-col">
         <Suspense fallback={<div className="h-full flex items-center justify-center text-meta text-sm">Loading…</div>}>
           <Routes>
-            <Route path="/"          element={<HomeScreen onPalette={() => setPaletteOpen(true)} />} />
-            <Route path="/goals"     element={<GoalsScreen />} />
-            <Route path="/goals/:id" element={<RunDetailScreen />} />
-            <Route path="/fleet"     element={<FleetScreen />} />
-            <Route path="/agents"    element={<AgentsScreen />} />
-            <Route path="/skills"    element={<SkillsScreen />} />
-            <Route path="/settings/*"element={<SettingsScreen />} />
-            <Route path="/inbox"     element={<InboxScreen />} />
-            <Route path="/browser"   element={<BrowserScreen />} />
-            <Route path="/code"      element={<CodeScreen />} />
-            <Route path="*"          element={<Navigate to="/" replace />} />
+            <Route path="/"           element={<HomeScreen onPalette={() => setPaletteOpen(true)} />} />
+            <Route path="/chat"       element={<ChatScreen />} />
+            <Route path="/fleet"      element={<FleetScreen />} />
+            <Route path="/apps"       element={<AppsScreen />} />
+            <Route path="/containers" element={<ContainersScreen />} />
+            <Route path="/cron"       element={<CronScreen />} />
+            <Route path="/flows"      element={<FlowsScreen />} />
+            <Route path="/skills"     element={<SkillsScreen />} />
+            <Route path="/settings/*" element={<SettingsScreen />} />
+            <Route path="/inbox"      element={<InboxScreen />} />
+            {/* Observer + deep-link routes — not in primary nav. */}
+            <Route path="/runs/:id"   element={<RunDetailScreen />} />
+            <Route path="/goals"      element={<GoalsScreen />} />
+            <Route path="/goals/:id"  element={<RunDetailScreen />} />
+            <Route path="/agents"     element={<AgentsScreen />} />
+            <Route path="/browser"    element={<BrowserScreen />} />
+            <Route path="/code"       element={<CodeScreen />} />
+            <Route path="*"           element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>
       </main>
