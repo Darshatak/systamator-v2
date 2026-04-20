@@ -4,6 +4,7 @@ import { Target, Plus, Send, Loader2, ChevronRight, LayoutList, Columns3 } from 
 import { useQuery } from '@tanstack/react-query'
 import { runList, runStart } from '@/lib/api'
 import { invoke } from '@/lib/ipc'
+import { toast } from '@/lib/toast'
 import { Card, Chip, Empty, TopBar, Button, StatusDot } from '@/components/ui'
 import type { Run } from '@/types/domain'
 import clsx from 'clsx'
@@ -54,7 +55,7 @@ export default function GoalsScreen() {
       setParams({}, { replace: true })
       navigate(`/goals/${runId}`)
     } catch (e) {
-      alert(`Failed to start run: ${String((e as Error)?.message ?? e)}`)
+      toast.error('Failed to start run', String((e as Error)?.message ?? e))
     } finally { setSubmitting(false) }
   }
 

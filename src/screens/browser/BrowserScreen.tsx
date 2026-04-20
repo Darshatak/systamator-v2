@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react'
 import { Globe, Send, Square, ArrowRight, RefreshCw, Loader2, Link2, Terminal, MousePointerClick, Keyboard, Copy, ChevronLeft, ChevronRight, Camera, ScanLine } from 'lucide-react'
 import { invoke } from '@/lib/ipc'
+import { toast } from '@/lib/toast'
 import { Card, Chip, TopBar, Button, Empty } from '@/components/ui'
 
 const QUICK_LINKS = [
@@ -47,7 +48,7 @@ export default function BrowserScreen() {
     try {
       await invoke('browser_open', { url: url.trim() })
       await pollUrl()
-    } catch (e) { alert(`Browser open failed: ${String((e as Error)?.message ?? e)}`) }
+    } catch (e) { toast.error('Browser open failed', String((e as Error)?.message ?? e)) }
     finally { setBusy(false) }
   }
 

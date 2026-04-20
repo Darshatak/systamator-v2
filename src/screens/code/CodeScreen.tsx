@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { FolderOpen, File, FileText, Terminal, GitBranch, Folder, ChevronRight, Loader2, Play, Save, RefreshCw, Layers, Trash2, Plus } from 'lucide-react'
 import { invoke } from '@/lib/ipc'
+import { toast } from '@/lib/toast'
 import { Card, Chip, TopBar, Button, Empty } from '@/components/ui'
 import clsx from 'clsx'
 
@@ -57,14 +58,14 @@ export default function CodeScreen() {
       const runId = `adhoc-${Date.now().toString(36)}`
       await invoke('worktree_create', { repoPath: workspace, runId })
       await loadWorktrees()
-    } catch (e) { alert(`worktree_create failed: ${String((e as Error)?.message ?? e)}`) }
+    } catch (e) { toast.error('worktree_create failed', String((e as Error)?.message ?? e)) }
     finally { setWtBusy(false) }
   }
 
   async function removeWorktree(id: string, repo: string) {
     setWtBusy(true)
     try { await invoke('worktree_remove', { runId: id, repoPath: repo }); await loadWorktrees() }
-    catch (e) { alert(`worktree_remove failed: ${String((e as Error)?.message ?? e)}`) }
+    catch (e) { toast.error('worktree_remove failed', String((e as Error)?.message ?? e)) }
     finally { setWtBusy(false) }
   }
 

@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 import { Palette } from './components/palette/Palette'
+import { Toaster } from './components/ui/Toaster'
 
 const HomeScreen      = lazy(() => import('./screens/home/HomeScreen'))
 const GoalsScreen     = lazy(() => import('./screens/goals/GoalsScreen'))
@@ -150,6 +151,7 @@ export default function App() {
       </main>
 
       <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <Toaster />
     </div>
   )
 }

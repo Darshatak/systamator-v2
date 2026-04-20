@@ -8,6 +8,7 @@ import { runGet, runTick, skillDistillRun } from '@/lib/api'
 import type { Step } from '@/types/domain'
 import { Card, Chip, TopBar, StatusDot, Button } from '@/components/ui'
 import { ChevronLeft, Clock, Bot, Wrench, Brain, GitFork, CheckCircle2, Loader2, XCircle, Layers, ExternalLink, Trash2 } from 'lucide-react'
+import { toast } from '@/lib/toast'
 import { invoke } from '@/lib/ipc'
 import clsx from 'clsx'
 
@@ -153,7 +154,7 @@ function WorktreeStrip({ run, onChanged }: { run: { id: string; status: string; 
     if (!confirm('Remove this worktree and its branch?')) return
     setBusy(true)
     try { await invoke('worktree_remove', { runId: run.id, repoPath: wt!.repo }); onChanged() }
-    catch (e) { alert(`worktree_remove: ${String((e as Error)?.message ?? e)}`) }
+    catch (e) { toast.error('worktree_remove failed', String((e as Error)?.message ?? e)) }
     finally { setBusy(false) }
   }
 

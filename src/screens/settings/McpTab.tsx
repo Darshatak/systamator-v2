@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react'
 import { Plug, Loader2, Check, Power, PowerOff, Trash2, Plus, Sparkles, Globe, Brain, GitBranch, Hash, FolderOpen, Database } from 'lucide-react'
 import clsx from 'clsx'
 import { invoke } from '@/lib/ipc'
+import { toast } from '@/lib/toast'
 import { Card, Chip, Button } from '@/components/ui'
 
 interface McpServerSpec { name: string; command: string; args: string[]; env?: Record<string, string>; description: string; trusted: boolean }
@@ -58,7 +59,7 @@ export function McpTab() {
       try { await invoke('mcp_start', { name: sug.spec.name }) } catch { /* no-op */ }
       await refresh()
     } catch (e) {
-      alert(`Install failed: ${String((e as Error)?.message ?? e)}`)
+      toast.error('Install failed', String((e as Error)?.message ?? e))
     } finally {
       setInstalling(null)
     }
